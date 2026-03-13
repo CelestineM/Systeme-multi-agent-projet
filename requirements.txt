@@ -1,5 +1,0 @@
-﻿mesa
-numpy
-seaborn
-matplotlib
-
