@@ -3,6 +3,7 @@
 # Date          : 13/03/2026
 # Members       : Malo Chauvel, Constance Piquet, Célestine Martin
 # ============================================================
+
 from abc import ABC, abstractmethod
 import mesa
 

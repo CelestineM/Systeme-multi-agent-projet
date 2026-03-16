@@ -21,65 +21,43 @@ class RobotMissionModel(mesa.Model):
                  rayon_zone_3: float, rayon_zone_2: float, 
                  seed: int = None):
         
-        # Initialisation du modèle avec la SEED globale
         super().__init__(seed=seed)
         self.running = True
         self.grid = mesa.space.MultiGrid(width, height, torus=False)
 
-        # Dictionnaires pour stocker les coordonnées des cases de chaque zone
         self.zone_cells = {1: [], 2: [], 3: []}
 
-        # --------------------------------------------------------
-        # 1. INITIALISATION DE L'ENVIRONNEMENT (Radioactivité et Dépôt)
-        # --------------------------------------------------------
         for x in range(width):
             for y in range(height):
-                # Calcul de la distance minimale au plus proche épicentre
                 min_dist = min([math.dist((x, y), ep) for ep in epicenters])
-                
-                # Détermination de la zone selon la distance
                 if min_dist <= rayon_zone_3:
                     zone = 3
                 elif min_dist <= rayon_zone_2:
                     zone = 2
                 else:
                     zone = 1
-                    
                 self.zone_cells[zone].append((x, y))
-
-                # Placement de l'agent de radioactivité (le fond de la carte)
                 rad_agent = RadioactivityAgent(self, zone)
                 self.grid.place_agent(rad_agent, (x, y))
-
-                # Placement de la WasteDisposalZone sur toute la colonne de droite
                 if x == width - 1:
                     disposal_zone = WasteDisposalZone(self, zone)
                     self.grid.place_agent(disposal_zone, (x, y))
 
-        # --------------------------------------------------------
-        # 2. PLACEMENT DES DÉCHETS (Dans leurs zones respectives)
-        # --------------------------------------------------------
         for waste_type, num in num_wastes.items():
-            # Association du type de déchet à sa zone d'origine
             target_zone = 1 if waste_type == "green" else (2 if waste_type == "yellow" else 3)
             available_cells = self.zone_cells[target_zone]
             
             for _ in range(num):
-                if not available_cells: # Sécurité si la zone est trop petite
+                if not available_cells:
                     break
-                # On utilise self.random pour respecter la SEED globale
                 pos = self.random.choice(available_cells)
                 waste = WasteAgent(self, waste_type)
                 self.grid.place_agent(waste, pos)
 
-        # --------------------------------------------------------
-        # 3. PLACEMENT DES ROBOTS (Dans les zones autorisées)
-        # --------------------------------------------------------
         for color, num in num_robots.items():
             for i in range(num):
                 agent_class = AGENT_CLASSES.get(color)
                 if agent_class:
-                    # Les robots verts commencent en zone 1, les jaunes en Z1/Z2, les rouges partout
                     if color == "green":
                         allowed_cells = self.zone_cells[1]
                     elif color == "yellow":
