@@ -69,7 +69,12 @@ class RobotMissionModel(Model):
                 agent.move(action.direction)
                 self.grid.update_agent_position(agent, action.direction)
         if action.name == 'pick_up':
-                agent.pick_up()
-
-        pass
-    
+            agent.pick_up()
+            self.grid.set_cell(agent.x, agent.y, None)
+        if action.name == 'drop':
+            if agent.carrying:
+                if self.grid.get_cell(agent.x, agent.y).cell_type.__name__ == 'RadioactivityAgent':
+                    self.grid.set_cell(agent.x, agent.y, agent.carrying)
+                agent.drop()
+        if action.name == 'transform':
+            agent.transform()
