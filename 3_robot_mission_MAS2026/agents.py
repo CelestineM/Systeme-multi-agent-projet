@@ -14,7 +14,8 @@ class Robot(Agent, ABC):
             "timestep": 0,
             "percepts": [],
             "actions": [],
-            "position": position
+            "position": position,
+            "carrying": None
         })
 
     @abstractmethod
@@ -48,6 +49,9 @@ class greenAgent(Robot):
         super().__init__(position)
         self.color = "green"
 
+    def do(self, action):
+        if action
+
 class yellowAgent(Robot):
     def __init__(self, position):
         super().__init__(position)
@@ -57,3 +61,11 @@ class redAgent(Robot):
     def __init__(self, position):
         super().__init__(position)
         self.color = "red"
+
+class Action:
+    VALID_DIRECTIONS = {(0, 1), (0, -1), (1, 0), (-1, 0)}  # up, down, right, left
+    VALID_NAMES = {"move", "pick_up", "drop", "transform"}
+    
+    def __init__(self):
+        self.name = ""
+        self.direction = (0, 0)
