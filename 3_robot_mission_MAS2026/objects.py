@@ -6,11 +6,10 @@
 
 import mesa
 import random
-from typing import Any
 
 class RadioactivityAgent(mesa.Agent):
-    def __init__(self, unique_id, model, zone):
-        super().__init__(unique_id, model)
+    def __init__(self, model, zone):
+        super().__init__(model)
         self.zone = zone
 
         if zone == 1:
@@ -23,26 +22,21 @@ class RadioactivityAgent(mesa.Agent):
             raise ValueError(f"Zone invalide : {zone}. Doit être 1, 2 ou 3.")
 
     def step(self):
-        pass  # Aucun comportement
-
+        pass
 
 class WasteDisposalZone(mesa.Agent):
-  
-    def __init__(self, unique_id, model, zone):
-        super().__init__(unique_id, model)
+    def __init__(self, model, zone):
+        super().__init__(model)
         self.zone = zone
 
     def step(self):
-        pass  # Aucun comportement
-
+        pass
 
 class WasteAgent(mesa.Agent):
-
     VALID_TYPES = {"green", "yellow", "red"}
 
-    def __init__(self, unique_id, model, waste_type):
-        super().__init__(unique_id, model)
-
+    def __init__(self, model, waste_type):
+        super().__init__(model)
         if waste_type not in self.VALID_TYPES:
             raise ValueError(f"Type de déchet invalide : {waste_type}.")
         
@@ -55,18 +49,12 @@ class WasteAgent(mesa.Agent):
             self.zone = 3
 
     def step(self):
-        pass  # Aucun comportement
+        pass
 
 class ObstacleAgent(mesa.Agent):
-    def __init__(self, unique_id, model):
-        super().__init__(unique_id, model)
+    def __init__(self, model):
+        super().__init__(model)
         self.zone = -1
-    def step(self):
-        pass  # Aucun comportement
 
-class Cell:
-    def __init__(self, x: int, y: int, cell_type: Any):
-        self.x = x
-        self.y = y
-        self.cell_type = cell_type
-        self.neighbors = []
+    def step(self):
+        pass

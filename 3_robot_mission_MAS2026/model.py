@@ -4,10 +4,10 @@
 # Members       : Malo Chauvel, Constance Piquet, Célestine Martin
 # ============================================================
 
-from mesa import Model
+import mesa
+import math
 from agents import greenAgent, yellowAgent, redAgent
-from typing import Any
-from objects import Cell
+from objects import WasteAgent, RadioactivityAgent, WasteDisposalZone
 
 AGENT_CLASSES = {
     'green': greenAgent,
@@ -15,66 +15,105 @@ AGENT_CLASSES = {
     'red': redAgent
 }
 
-class Grid:
-    def __init__(self, width: int, height: int):
-        self.width = width
-        self.height = height
-        self.cells = [[Cell(x, y, None) for y in range(height)] for x in range(width)]
-        self.agent_positions = {}
-    
-    def get_cell(self, x: int, y: int) -> Cell:
-        if 0 <= x < self.width and 0 <= y < self.height:
-            return self.cells[x][y]
-        else:
-            raise IndexError(f"Coordonnées hors limites : ({x}, {y})")
+class RobotMissionModel(mesa.Model):
+    def __init__(self, num_robots: dict, width: int, height: int, 
+                 num_wastes: dict, epicenters: list, 
+                 rayon_zone_3: float, rayon_zone_2: float, 
+                 seed: int = None):
         
-    def set_cell(self, x: int, y: int, cell_type: Any):
-        if 0 <= x < self.width and 0 <= y < self.height:
-            self.cells[x][y] = Cell(x, y, cell_type)
+        # Initialisation du modèle avec la SEED globale
+        super().__init__(seed=seed)
+        self.running = True
+        self.grid = mesa.space.MultiGrid(width, height, torus=False)
 
-            if cell_type in AGENT_CLASSES:
-                self.agent_positions[(x, y)] = cell_type
-        else:
-            raise IndexError(f"Coordonnées hors limites : ({x}, {y})")
+        # Dictionnaires pour stocker les coordonnées des cases de chaque zone
+        self.zone_cells = {1: [], 2: [], 3: []}
 
-    def update_agent_position(self, agent, direction):
-        current_pos = self.agent_positions.get((agent.x, agent.y))
-        new_x = agent.x + direction[0]
-        new_y = agent.y + direction[1]
-        if current_pos:
-            del self.agent_positions[(agent.x, agent.y)]
-        self.agent_positions[(new_x, new_y)] = agent
+        # --------------------------------------------------------
+        # 1. INITIALISATION DE L'ENVIRONNEMENT (Radioactivité et Dépôt)
+        # --------------------------------------------------------
+        for x in range(width):
+            for y in range(height):
+                # Calcul de la distance minimale au plus proche épicentre
+                min_dist = min([math.dist((x, y), ep) for ep in epicenters])
+                
+                # Détermination de la zone selon la distance
+                if min_dist <= rayon_zone_3:
+                    zone = 3
+                elif min_dist <= rayon_zone_2:
+                    zone = 2
+                else:
+                    zone = 1
+                    
+                self.zone_cells[zone].append((x, y))
 
-class RobotMissionModel(Model):
-    def __init__(self, num_robots : dict, grid : Grid):
-        super().__init__()
-        self.grid = grid
+                # Placement de l'agent de radioactivité (le fond de la carte)
+                rad_agent = RadioactivityAgent(self, zone)
+                self.grid.place_agent(rad_agent, (x, y))
 
+                # Placement de la WasteDisposalZone sur toute la colonne de droite
+                if x == width - 1:
+                    disposal_zone = WasteDisposalZone(self, zone)
+                    self.grid.place_agent(disposal_zone, (x, y))
+
+        # --------------------------------------------------------
+        # 2. PLACEMENT DES DÉCHETS (Dans leurs zones respectives)
+        # --------------------------------------------------------
+        for waste_type, num in num_wastes.items():
+            # Association du type de déchet à sa zone d'origine
+            target_zone = 1 if waste_type == "green" else (2 if waste_type == "yellow" else 3)
+            available_cells = self.zone_cells[target_zone]
+            
+            for _ in range(num):
+                if not available_cells: # Sécurité si la zone est trop petite
+                    break
+                # On utilise self.random pour respecter la SEED globale
+                pos = self.random.choice(available_cells)
+                waste = WasteAgent(self, waste_type)
+                self.grid.place_agent(waste, pos)
+
+        # --------------------------------------------------------
+        # 3. PLACEMENT DES ROBOTS (Dans les zones autorisées)
+        # --------------------------------------------------------
         for color, num in num_robots.items():
             for i in range(num):
                 agent_class = AGENT_CLASSES.get(color)
                 if agent_class:
-                    agent_class(self)
-    
-    def check_move_validity(self, agent, direction):
-        zones = agent.autorized_zones()
-        target_cell = self.grid.get_cell(agent.x + direction[0], agent.y + direction[1])
-        if target_cell and target_cell.cell_type.zone in zones:
-            return True
-        return False
+                    # Les robots verts commencent en zone 1, les jaunes en Z1/Z2, les rouges partout
+                    if color == "green":
+                        allowed_cells = self.zone_cells[1]
+                    elif color == "yellow":
+                        allowed_cells = self.zone_cells[1] + self.zone_cells[2]
+                    else:
+                        allowed_cells = self.zone_cells[1] + self.zone_cells[2] + self.zone_cells[3]
+                        
+                    pos = self.random.choice(allowed_cells)
+                    robot = agent_class(self)
+                    self.grid.place_agent(robot, pos)
+
+        self.datacollector = mesa.DataCollector(
+            agent_reporters={"Position": "pos", "Color": "color"}
+        )
 
     def do(self, agent, action):
-        if action.name == 'move':
-            if self.check_move_validity(agent, action.direction):
-                agent.move(action.direction)
-                self.grid.update_agent_position(agent, action.direction)
-        if action.name == 'pick_up':
-            agent.pick_up()
-            self.grid.set_cell(agent.x, agent.y, None)
-        if action.name == 'drop':
-            if agent.carrying:
-                if self.grid.get_cell(agent.x, agent.y).cell_type.__name__ == 'RadioactivityAgent':
-                    self.grid.set_cell(agent.x, agent.y, agent.carrying)
-                agent.drop()
-        if action.name == 'transform':
-            agent.transform()
+        if not action: return {}
+        if action["name"] == 'move':
+            dx, dy = action["direction"]
+            new_x, new_y = agent.pos[0] + dx, agent.pos[1] + dy
+            if not self.grid.out_of_bounds((new_x, new_y)):
+                self.grid.move_agent(agent, (new_x, new_y))
+
+        elif action["name"] == 'pick_up':
+            cell_contents = self.grid.get_cell_list_contents([agent.pos])
+            wastes = [obj for obj in cell_contents if isinstance(obj, WasteAgent)]
+            if wastes:
+                waste = wastes[0]
+                agent.carrying.append(waste)
+                self.grid.remove_agent(waste)
+                self.agents.remove(waste)
+
+        return {agent.pos: self.grid.get_cell_list_contents([agent.pos])}
+
+    def step(self):
+        self.datacollector.collect(self)
+        self.agents.shuffle_do("step")
