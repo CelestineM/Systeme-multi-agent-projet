@@ -4,10 +4,11 @@
 # Members       : Malo Chauvel, Constance Piquet, Célestine Martin
 # ============================================================
 from abc import ABC, abstractmethod
+from mesa import Agent
 
-class Robot(ABC):
+class Robot(Agent, ABC):
     def __init__(self, position):
-        self.id = id(self)
+        super().__init__()
         self.knowledge = []
         self.knowledge.append({
             "timestep": 0,
