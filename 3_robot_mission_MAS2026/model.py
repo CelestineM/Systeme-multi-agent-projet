@@ -6,6 +6,7 @@
 
 import mesa
 import math
+from typing import Optional
 from agents import greenAgent, yellowAgent, redAgent
 from objects import WasteAgent, RadioactivityAgent, WasteDisposalZone
 
@@ -19,7 +20,7 @@ class RobotMissionModel(mesa.Model):
     def __init__(self, num_robots: dict, width: int, height: int, 
                  num_wastes: dict, epicenters: list, 
                  rayon_zone_3: float, rayon_zone_2: float, 
-                 seed: int = None):
+                 seed: Optional[int] = None):
         
         super().__init__(seed=seed)
         self.running = True
@@ -29,7 +30,7 @@ class RobotMissionModel(mesa.Model):
 
         for x in range(width):
             for y in range(height):
-                min_dist = min([math.dist((x, y), ep) for ep in epicenters])
+                min_dist = min(math.dist((x, y), ep) for ep in epicenters)
                 if min_dist <= rayon_zone_3:
                     zone = 3
                 elif min_dist <= rayon_zone_2:
@@ -55,15 +56,15 @@ class RobotMissionModel(mesa.Model):
                 self.grid.place_agent(waste, pos)
 
         for color, num in num_robots.items():
-            for i in range(num):
+            for _ in range(num):
                 agent_class = AGENT_CLASSES.get(color)
                 if agent_class:
                     if color == "green":
                         allowed_cells = self.zone_cells[1]
                     elif color == "yellow":
-                        allowed_cells = self.zone_cells[1] + self.zone_cells[2]
+                        allowed_cells = self.zone_cells[2]
                     else:
-                        allowed_cells = self.zone_cells[1] + self.zone_cells[2] + self.zone_cells[3]
+                        allowed_cells = self.zone_cells[3]
                         
                     pos = self.random.choice(allowed_cells)
                     robot = agent_class(self)
@@ -72,26 +73,119 @@ class RobotMissionModel(mesa.Model):
         self.datacollector = mesa.DataCollector(
             agent_reporters={"Position": "pos", "Color": "color"}
         )
+    def get_zone(self, pos):
+        cell = self.grid.get_cell_list_contents([pos])
+        radio = next((obj for obj in cell if isinstance(obj, RadioactivityAgent)), None)
+        return radio.zone if radio else None
+    
+    def is_border_cell_of_zone(self, pos, zone, adjacent_to_zone):
+        if self.get_zone(pos) != zone:
+            return False
+
+        x, y = pos
+        for dx, dy in [(0,1), (0,-1), (1,0), (-1,0)]:
+            npos = (x + dx, y + dy)
+            if self.grid.out_of_bounds(npos):
+                continue
+            if self.get_zone(npos) == adjacent_to_zone:
+                return True
+        return False
+    
+    def get_local_percepts(self, pos):
+        percepts = {}
+        x0, y0 = pos
+        for dx in [-1, 0, 1]:
+            for dy in [-1, 0, 1]:
+                x, y = x0 + dx, y0 + dy
+                if self.grid.out_of_bounds((x, y)):
+                    continue
+                cell = self.grid.get_cell_list_contents([(x, y)])
+                zone = None
+                for obj in cell:
+                    if isinstance(obj, RadioactivityAgent):
+                        zone = obj.zone
+                        break
+                percepts[(x, y)] = {
+                    "zone": zone,
+                    "wastes": [obj.waste_type for obj in cell if isinstance(obj, WasteAgent)],
+                    "disposal": any(isinstance(obj, WasteDisposalZone) for obj in cell),
+                }
+
+        return percepts
+    def can_deposit_red(self, agent, pos):
+        return self.is_border_cell_of_zone(pos, zone=2, adjacent_to_zone=3)
+
+    def can_deposit_yellow(self, agent, pos):
+        return self.is_border_cell_of_zone(pos, zone=1, adjacent_to_zone=2)
+
+    def is_disposal_cell(self, pos):
+        cell = self.grid.get_cell_list_contents([pos])
+        return any(isinstance(obj, WasteDisposalZone) for obj in cell)
+
+    def spawn_waste(self, waste_type, pos):
+        waste = WasteAgent(self, waste_type)
+        self.grid.place_agent(waste, pos)
+        self.agents.add(waste)
 
     def do(self, agent, action):
-        if not action: return {}
-        if action["name"] == 'move':
-            dx, dy = action["direction"]
-            new_x, new_y = agent.pos[0] + dx, agent.pos[1] + dy
-            if not self.grid.out_of_bounds((new_x, new_y)):
-                self.grid.move_agent(agent, (new_x, new_y))
+        if not action:
+            return self.get_local_percepts(agent.pos)
 
-        elif action["name"] == 'pick_up':
-            cell_contents = self.grid.get_cell_list_contents([agent.pos])
-            wastes = [obj for obj in cell_contents if isinstance(obj, WasteAgent)]
+        if action["name"] == "move":
+            dx, dy = action["direction"]
+            new_pos = (agent.pos[0] + dx, agent.pos[1] + dy)
+
+            if not self.grid.out_of_bounds(new_pos):
+                cell = self.grid.get_cell_list_contents([new_pos])
+                zone = next((obj.zone for obj in cell if isinstance(obj, RadioactivityAgent)), None)
+
+                if self.can_enter(agent, new_pos):
+                    self.grid.move_agent(agent, new_pos)
+
+        elif action["name"] == "pick_up":
+            cell = self.grid.get_cell_list_contents([agent.pos])
+            wastes = [
+                obj for obj in cell
+                if isinstance(obj, WasteAgent) and obj.waste_type in agent.allowed_waste_types
+            ]
             if wastes:
                 waste = wastes[0]
                 agent.carrying.append(waste)
                 self.grid.remove_agent(waste)
                 self.agents.remove(waste)
+        elif action["name"] == "deposit":
+            if not agent.carrying:
+                return self.get_local_percepts(agent.pos)
 
-        return {agent.pos: self.grid.get_cell_list_contents([agent.pos])}
+            if agent.color == "red" and self.can_deposit_red(agent, agent.pos):
+                carried = agent.carrying.pop()
+                if carried.waste_type == "red":
+                    self.spawn_waste("yellow", agent.pos)
+                    self.spawn_waste("yellow", agent.pos)
+
+            elif agent.color == "yellow" and self.can_deposit_yellow(agent, agent.pos):
+                carried = agent.carrying.pop()
+                if carried.waste_type == "yellow":
+                    self.spawn_waste("green", agent.pos)
+                    self.spawn_waste("green", agent.pos)
+
+            elif agent.color == "green" and self.is_disposal_cell(agent.pos):
+                agent.carrying.pop()
+
+        return self.get_local_percepts(agent.pos)
 
     def step(self):
         self.datacollector.collect(self)
         self.agents.shuffle_do("step")
+
+    def can_enter(self, agent, pos):
+        if self.grid.out_of_bounds(pos):
+            return False
+        zone = self.get_zone(pos)
+        if agent.color == "green":
+            return zone == 1 or self.is_disposal_cell(pos)
+        if agent.color == "yellow":
+            return zone == 2 or self.is_border_cell_of_zone(pos, zone=1, adjacent_to_zone=2)
+        if agent.color == "red":
+            return zone == 3 or self.is_border_cell_of_zone(pos, zone=2, adjacent_to_zone=3)
+        return False
