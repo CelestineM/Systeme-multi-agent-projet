@@ -76,7 +76,10 @@ def make_custom_space(model):
 
 def CustomSpaceComponent(model):
     fig = make_custom_space(model)
-    return solara.FigureMatplotlib(fig)
+    try:
+        return solara.FigureMatplotlib(fig)
+    finally:
+        plt.close(fig)
 
 model_params = {
     "num_robots": {"green": 2, "yellow": 2, "red": 1},
@@ -87,7 +90,7 @@ model_params = {
     "rayon_zone_3": 2.5,
     "rayon_zone_2": 5.5,
     "seed": 1,
-    'version': "v0.0.1"
+    'version': "v0.0.3"
 }
 
 mission_model = RobotMissionModel(**model_params)
