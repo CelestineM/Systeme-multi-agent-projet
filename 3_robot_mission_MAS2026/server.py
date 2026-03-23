@@ -23,6 +23,8 @@ def make_custom_space(model):
     ax.grid(True, color="lightgray", linewidth=0.5)
 
     for cell_content, (x, y) in model.grid.coord_iter():
+        waste_count = sum(1 for a in cell_content if isinstance(a, WasteAgent))
+
         for agent in cell_content:
 
             if isinstance(agent, RadioactivityAgent):
@@ -39,23 +41,34 @@ def make_custom_space(model):
                 ax.scatter(x, y, marker="s", color=agent.waste_type,
                            s=120, zorder=2)
 
-            elif isinstance(agent, greenAgent):
-                ax.scatter(x, y, marker="o", color="green",
+            elif isinstance(agent, (greenAgent, yellowAgent, redAgent)):
+                color = (
+                    "green" if isinstance(agent, greenAgent) else
+                    "yellow" if isinstance(agent, yellowAgent) else
+                    "red"
+                )
+                ax.scatter(x, y, marker="o", color=color,
                            s=200, zorder=3, edgecolors="black", linewidths=0.8)
 
-            elif isinstance(agent, yellowAgent):
-                ax.scatter(x, y, marker="o", color="yellow",
-                           s=200, zorder=3, edgecolors="black", linewidths=0.8)
+                carried = getattr(agent, "carrying", [])
+                if carried:
+                    ax.text(x + 0.35, y + 0.35, str(len(carried)),
+                            fontsize=7, color="white", fontweight="bold",
+                            ha="center", va="center", zorder=5,
+                            bbox=dict(boxstyle="round,pad=0.1", facecolor="black", alpha=0.6))
 
-            elif isinstance(agent, redAgent):
-                ax.scatter(x, y, marker="o", color="red",
-                           s=200, zorder=3, edgecolors="black", linewidths=0.8)
+        if waste_count > 0:
+            ax.text(x + 0.35, y + 0.35, str(waste_count),
+                    fontsize=7, color="black", fontweight="bold",
+                    ha="center", va="center", zorder=5)
 
     legend_elements = [
         mpatches.Patch(color="green", label="Robot vert"),
         mpatches.Patch(color="yellow", label="Robot jaune"),
         mpatches.Patch(color="red", label="Robot rouge"),
         mpatches.Patch(color="blue", alpha=0.35, label="Zone dépôt"),
+        plt.Line2D([0], [0], marker="^", color="w", markerfacecolor="white",
+                   markeredgecolor="black", markersize=7, label="Porte un déchet"),
     ]
     ax.legend(handles=legend_elements, loc="upper right", fontsize=8)
     plt.tight_layout()
@@ -73,7 +86,8 @@ model_params = {
     "epicenters": [(7, 7), (1, 13)],
     "rayon_zone_3": 2.5,
     "rayon_zone_2": 5.5,
-    "seed": 1
+    "seed": 1,
+    'version': "v0.0.1"
 }
 
 mission_model = RobotMissionModel(**model_params)

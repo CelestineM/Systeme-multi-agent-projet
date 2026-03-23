@@ -9,6 +9,7 @@ import math
 from typing import Optional
 from agents import greenAgent, yellowAgent, redAgent
 from objects import WasteAgent, RadioactivityAgent, WasteDisposalZone
+from communication.message.MessageService import MessageService
 
 AGENT_CLASSES = {
     'green': greenAgent,
@@ -19,13 +20,16 @@ AGENT_CLASSES = {
 class RobotMissionModel(mesa.Model):
     def __init__(self, num_robots: dict, width: int, height: int, 
                  num_wastes: dict, epicenters: list, 
-                 rayon_zone_3: float, rayon_zone_2: float, 
-                 seed: Optional[int] = None):
+                 rayon_zone_3: float, rayon_zone_2: float,
+                 enable_messaging: bool = False, 
+                 seed: Optional[int] = None,
+                 version: Optional[str] = None):
         
         super().__init__(seed=seed)
         self.running = True
         self.grid = mesa.space.MultiGrid(width, height, torus=False)
-
+        self.enable_messaging = enable_messaging
+        self.__messages_service = MessageService(self)
         self.zone_cells = {1: [], 2: [], 3: []}
 
         for x in range(width):
@@ -67,7 +71,7 @@ class RobotMissionModel(mesa.Model):
                         allowed_cells = self.zone_cells[3]
                         
                     pos = self.random.choice(allowed_cells)
-                    robot = agent_class(self)
+                    robot = agent_class(self, version=version)
                     self.grid.place_agent(robot, pos)
 
         self.datacollector = mesa.DataCollector(
@@ -143,6 +147,10 @@ class RobotMissionModel(mesa.Model):
                     self.grid.move_agent(agent, new_pos)
 
         elif action["name"] == "pick_up":
+            max_carry = getattr(agent, "max_carry", 2)
+            if len(agent.carrying) >= max_carry:
+                return self.get_local_percepts(agent.pos)
+            
             cell = self.grid.get_cell_list_contents([agent.pos])
             wastes = [
                 obj for obj in cell

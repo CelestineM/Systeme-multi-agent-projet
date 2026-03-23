@@ -5,7 +5,7 @@
 # ============================================================
 
 from abc import ABC, abstractmethod
-from typing import Any, cast
+from typing import Any, Optional, cast
 
 import mesa
 import random
@@ -14,7 +14,7 @@ from objects import WasteAgent
 
 
 class Robot(mesa.Agent, ABC):
-    def __init__(self, model, color, allowed_waste_types, home_zone, deposit_zone, can_deposit, split_result):
+    def __init__(self, model, color, allowed_waste_types, home_zone, deposit_zone, can_deposit, split_result, max_carry, version: Optional[str] = None):
         super().__init__(model)
         self.carrying  = []
         self.knowledge = {
@@ -30,6 +30,7 @@ class Robot(mesa.Agent, ABC):
         self.deposit_zone = deposit_zone
         self.can_deposit = can_deposit
         self.split_result = split_result
+        self.max_carry = max_carry
 
 
     @abstractmethod
@@ -47,9 +48,11 @@ class Robot(mesa.Agent, ABC):
         self.update_knowledge(percepts, None, current_pos)
 
         action = self.deliberate()
-
         new_percepts = model.do(self, action)
         self.update_knowledge(new_percepts, action, self._current_pos())
+
+        for pos, info in new_percepts.items():
+            self.knowledge["map"][pos]["wastes"] = info["wastes"]
 
     def update_knowledge(self, percepts, action, position):
         self.knowledge["timestep"] += 1
@@ -105,13 +108,11 @@ class Robot(mesa.Agent, ABC):
         current_pos = self._current_pos()
 
         if self.deposit_zone == 1:
-            # Green agents deposit on WasteDisposalZone cells (zone 1, rightmost column)
             candidates = [
                 pos for pos, info in self.knowledge["map"].items()
                 if info.get("disposal")
             ]
         else:
-            # Yellow/red agents deposit on border cells between their home zone and the lower zone
             candidates = [
                 pos for pos, info in self.knowledge["map"].items()
                 if info.get("zone") == self.deposit_zone
@@ -135,97 +136,188 @@ class Robot(mesa.Agent, ABC):
             return {"name": "move", "direction": random.choice(possible_steps)}
 
         return None
+    
 
-class greenAgent(Robot):
-    def __init__(self, model):
-        super().__init__(model, "green", ["green"], 1, 1, True, False)
+class VersionedRobot(Robot):
+    def __init__(self, model, color, allowed_waste_types, home_zone, deposit_zone, can_deposit, split_result, max_carry, version: Optional[str] = None):
+        super().__init__(model, color, allowed_waste_types, home_zone, deposit_zone, can_deposit, split_result, max_carry)
+        self.version = version
 
     def deliberate(self) -> dict | None:
-        current_pos = self._current_pos()
-        here = self.knowledge["map"].get(current_pos, {"wastes": [], "disposal": False})
+        if self.version == "v0.0.1":
+            current_pos = self._current_pos()
+            model = cast(Any, self.model)
+            here = self.knowledge["map"].get(current_pos, {"wastes": [], "disposal": False})
 
-        # Deposit if carrying and standing on a disposal cell
-        if self.carrying and here.get("disposal"):
-            return {"name": "deposit"}
+            can_deposit_now = (
+                (self.color == "green"  and here.get("disposal")) or
+                (self.color == "yellow" and model.can_deposit_yellow(self, current_pos)) or
+                (self.color == "red"    and model.can_deposit_red(self, current_pos))
+            )
 
-        # Move toward known disposal cell if carrying
-        if self.carrying:
-            target = self.closest_known_deposit_cell()
+            if self.carrying and can_deposit_now:
+                return {"name": "deposit"}
+
+            if len(self.carrying) >= self.max_carry:
+                target = self.closest_known_deposit_cell()
+                if target is not None:
+                    direction = self.one_step_toward(target)
+                    if direction is not None:
+                        return {"name": "move", "direction": direction}
+                return self.random_safe_move()
+
+            if self.color in here.get("wastes", []):
+                return {"name": "pick_up"}
+
+            target = self.closest_allowed_waste()
             if target is not None:
                 direction = self.one_step_toward(target)
                 if direction is not None:
                     return {"name": "move", "direction": direction}
 
-        # Pick up green waste if not full
-        if "green" in here.get("wastes", []) and len(self.carrying) < 2:
-            return {"name": "pick_up"}
+            if self.carrying:
+                target = self.closest_known_deposit_cell()
+                if target is not None:
+                    direction = self.one_step_toward(target)
+                    if direction is not None:
+                        return {"name": "move", "direction": direction}
 
-        # Move toward known green waste
-        target = self.closest_allowed_waste()
-        if target is not None:
-            direction = self.one_step_toward(target)
-            if direction is not None:
-                return {"name": "move", "direction": direction}
+            return self.random_safe_move()
 
-        return self.random_safe_move()
+        elif self.version == "v0.1.0":
+            pass
+        else:
+            raise ValueError(f"Version inconnue : {self.version}")
+
+class greenAgent(VersionedRobot):
+    def __init__(self, model, version: Optional[str] = None):
+        super().__init__(model, "green", ["green"], 1, 1, True, False, 2, version=version)
+
+    # def deliberate(self) -> dict | None:
+    #     current_pos = self._current_pos()
+    #     here = self.knowledge["map"].get(current_pos, {"wastes": [], "disposal": False})
+
+    #     if self.carrying and here.get("disposal"):
+    #         return {"name": "deposit"}
+        
+    #     if len(self.carrying) >= self.max_carry:
+    #         target = self.closest_known_deposit_cell()
+    #         if target is not None:
+    #             direction = self.one_step_toward(target)
+    #             if direction is not None:
+    #                 return {"name": "move", "direction": direction}
+    #         return self.random_safe_move()
+
+    #     if self.color in here.get("wastes", []):
+    #         return {"name": "pick_up"}
+
+    #     target = self.closest_allowed_waste()
+    #     if target is not None:
+    #         direction = self.one_step_toward(target)
+    #         if direction is not None:
+    #             return {"name": "move", "direction": direction}
+
+    #     if self.carrying:
+    #         target = self.closest_known_deposit_cell()
+    #         if target is not None:
+    #             direction = self.one_step_toward(target)
+    #             if direction is not None:
+    #                 return {"name": "move", "direction": direction}
+
+    #     return self.random_safe_move()
 
 
-class yellowAgent(Robot):
-    def __init__(self, model):
-        super().__init__(model, "yellow", ["yellow"], 2, 1, False, "green")
+class yellowAgent(VersionedRobot):
+    def __init__(self, model, version: Optional[str] = None):
+        super().__init__(model, "yellow", ["yellow"], 2, 1, False, "green", 2, version=version)
+        
 
-    def deliberate(self) -> dict | None:
-        current_pos = self._current_pos()
-        model = cast(Any, self.model)
-        here = self.knowledge["map"].get(current_pos, {})
+    # def deliberate(self) -> dict | None:
+    #     current_pos = self._current_pos()
+    #     here = self.knowledge["map"].get(current_pos, {"wastes": [], "disposal": False})
 
-        if self.carrying:
-            if model.can_deposit_yellow(self, current_pos):
-                return {"name": "deposit"}
+    #     if self.carrying and here.get("disposal"):
+    #         return {"name": "deposit"}
+        
+    #     if len(self.carrying) >= self.max_carry:
+    #         target = self.closest_known_deposit_cell()
+    #         if target is not None:
+    #             direction = self.one_step_toward(target)
+    #             if direction is not None:
+    #                 return {"name": "move", "direction": direction}
+    #         return self.random_safe_move()
 
-            target = self.closest_known_deposit_cell()
-            if target:
-                direction = self.one_step_toward(target)
-                if direction is not None:
-                    return {"name": "move", "direction": direction}
+    #     if self.color in here.get("wastes", []):
+    #         return {"name": "pick_up"}
 
-        if "yellow" in here.get("wastes", []):
-            return {"name": "pick_up"}
+    #     target = self.closest_allowed_waste()
+    #     if target is not None:
+    #         direction = self.one_step_toward(target)
+    #         if direction is not None:
+    #             return {"name": "move", "direction": direction}
 
-        target = self.closest_allowed_waste()
-        if target:
-            direction = self.one_step_toward(target)
-            if direction is not None:
-                return {"name": "move", "direction": direction}
+    #     if self.carrying:
+    #         target = self.closest_known_deposit_cell()
+    #         if target is not None:
+    #             direction = self.one_step_toward(target)
+    #             if direction is not None:
+    #                 return {"name": "move", "direction": direction}
 
-        return self.random_safe_move()
+    #     return self.random_safe_move()
 
-class redAgent(Robot):
-    def __init__(self, model):
-        super().__init__(model, "red", ["red"], 3, 2, False, "yellow")
 
-    def deliberate(self) -> dict | None:
-        current_pos = self._current_pos()
-        model = cast(Any, self.model)
-        here = self.knowledge["map"].get(current_pos, {})
+    #     #
+    #     current_pos = self._current_pos()
+    #     model = cast(Any, self.model)
+    #     here = self.knowledge["map"].get(current_pos, {})
 
-        if self.carrying:
-            if model.can_deposit_red(self, current_pos):
-                return {"name": "deposit"}
+    #     if self.carrying:
+    #         if model.can_deposit_yellow(self, current_pos):
+    #             return {"name": "deposit"}
 
-            target = self.closest_known_deposit_cell()
-            if target:
-                direction = self.one_step_toward(target)
-                if direction is not None:
-                    return {"name": "move", "direction": direction}
+    #         target = self.closest_known_deposit_cell()
+    #         if target:
+    #             direction = self.one_step_toward(target)
+    #             if direction is not None:
+    #                 return {"name": "move", "direction": direction}
 
-        if "red" in here.get("wastes", []):
-            return {"name": "pick_up"}
+    #     if self.color in here.get("wastes", []):
+    #         return {"name": "pick_up"}
 
-        target = self.closest_allowed_waste()
-        if target:
-            direction = self.one_step_toward(target)
-            if direction is not None:
-                return {"name": "move", "direction": direction}
+    #     target = self.closest_allowed_waste()
+    #     if target:
+    #         direction = self.one_step_toward(target)
+    #         if direction is not None:
+    #             return {"name": "move", "direction": direction}
 
-        return self.random_safe_move()
+    #     return self.random_safe_move()
+
+class redAgent(VersionedRobot):
+    def __init__(self, model, version: Optional[str] = None):
+        super().__init__(model, "red", ["red"], 3, 2, False, "yellow", 2, version=version)
+
+    # def deliberate(self) -> dict | None:
+        # current_pos = self._current_pos()
+        # model = cast(Any, self.model)
+        # here = self.knowledge["map"].get(current_pos, {})
+
+        # if self.carrying:
+        #     if model.can_deposit_red(self, current_pos):
+        #         return {"name": "deposit"}
+
+        #     target = self.closest_known_deposit_cell()
+        #     if target:
+        #         direction = self.one_step_toward(target)
+        #         if direction is not None:
+        #             return {"name": "move", "direction": direction}
+
+        # if self.color in here.get("wastes", []):
+        #     return {"name": "pick_up"}
+
+        # target = self.closest_allowed_waste()
+        # if target:
+        #     direction = self.one_step_toward(target)
+        #     if direction is not None:
+        #         return {"name": "move", "direction": direction}
+
+        # return self.random_safe_move()
