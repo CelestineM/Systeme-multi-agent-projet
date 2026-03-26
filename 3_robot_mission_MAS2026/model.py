@@ -78,10 +78,19 @@ class RobotMissionModel(mesa.Model):
         self.datacollector = mesa.DataCollector(
             agent_reporters={"Position": "pos", "Color": "color"}
         )
+
     def get_zone(self, pos):
         cell = self.grid.get_cell_list_contents([pos])
         radio = next((obj for obj in cell if isinstance(obj, RadioactivityAgent)), None)
         return radio.zone if radio else None
+    
+    def get_agents_zone(self, zone: int):
+        zone_color = {1: "green", 2: "yellow", 3: "red"}
+        cells = self.zone_cells[zone]
+        agents = self.grid.get_cell_list_contents(cells)
+        return [a for a in agents 
+                if isinstance(a, (greenAgent, yellowAgent, redAgent)) 
+                and a.color == zone_color[zone]]
     
     def is_border_cell_of_zone(self, pos, zone, adjacent_to_zone):
         if self.get_zone(pos) != zone:

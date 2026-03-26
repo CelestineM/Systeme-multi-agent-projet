@@ -3,6 +3,8 @@ from typing import Any, Optional, cast
 import heapq
 import random
 
+from communication.message.MessagePerformative import MessagePerformative
+
 import mesa
 
 
@@ -178,6 +180,31 @@ class LocalKnowledgeSharing:
                 continue
             robot.knowledge.merge_shared_map(other.knowledge.map)
 
+class DepositKnowledgeSharing:
+    def share(self, robot):
+        if robot.carrying and robot.can_deposit:
+            current_pos = robot._current_pos()
+            zone = robot.model.get_zone(current_pos)
+            agents_to_message = robot.model.get_agents_zone(zone)
+            
+            shared_map = dict(robot.knowledge.map)
+            existing = shared_map.get(current_pos, {})
+
+            shared_map[current_pos] = {
+                "zone": zone,
+                "wastes": existing.get("wastes", []) + [w.waste_type for w in robot.carrying],
+                "disposal": existing.get("disposal", False),
+                "timestamp": robot.knowledge.timestep
+            }
+
+            deposit_info = {
+                "pos": current_pos,
+                "map": shared_map,
+            }
+
+            for agent in agents_to_message:
+                if agent is not robot:
+                    robot.send_message(agent, MessagePerformative.INFORM_REF, deposit_info)
 
 # ─── Decision policy ─────────────────────────────────────────────────────────
 
@@ -188,7 +215,6 @@ class DecisionPolicy:
 
     def deliberate(self, robot) -> dict | None:
         self.communication.share(robot)
-
         current_pos = robot._current_pos()
         model = cast(Any, robot.model)
         here = robot.knowledge.map.get(
@@ -196,13 +222,13 @@ class DecisionPolicy:
             {"wastes": [], "disposal": False, "zone": None, "timestamp": -1},
         )
 
-        can_deposit_now = (
+        robot.can_deposit = (
             (robot.color == "green" and here.get("disposal")) or
             (robot.color == "yellow" and model.can_deposit_yellow(robot, current_pos)) or
             (robot.color == "red" and model.can_deposit_red(robot, current_pos))
         )
 
-        if robot.carrying and can_deposit_now:
+        if robot.carrying and robot.can_deposit:
             return {"name": "deposit"}
 
         if len(robot.carrying) >= robot.max_carry:
@@ -211,7 +237,7 @@ class DecisionPolicy:
                 direction = self.navigator.step_toward(robot, target)
                 if direction is not None:
                     return {"name": "move", "direction": direction}
-            return self.navigator.exploration_move(robot)
+            return self.navigator.exploration_move(robot) # ligne redondante ?
 
         if robot.color in here.get("wastes", []):
             return {"name": "pick_up"}
@@ -268,8 +294,29 @@ class Robot(mesa.Agent, ABC):
 
     def _current_pos(self):
         return cast(tuple[int, int], self.pos)
+    
+    def handle_messages(self):
+        messages = self.get_new_messages()
+        for msg in messages:
+            performative = msg.get_performative()
+            content = msg.get_content()
+
+            if performative == MessagePerformative.INFORM_REF:
+                pos = content["pos"]
+                received_ts = content["timestamp"]
+                my_info = self.knowledge.map.get(pos)
+                my_ts = my_info.get("timestamp", -1) if my_info else -1 # vérifier que la connaissance du message est plus récente
+
+                if my_info is None or received_ts > my_ts:
+                    self.knowledge.map[pos] = {
+                        "zone": content["zone"],
+                        "wastes": content["wastes"],
+                        "disposal": my_info.get("disposal", False) if my_info else False,
+                        "timestamp": received_ts
+                    }
 
     def step_agent(self):
+        self.handle_messages()
         current_pos = self._current_pos()
         percepts = self.model.get_local_percepts(current_pos)
         self.knowledge.update_from_percepts(percepts, None, current_pos)
@@ -280,7 +327,7 @@ class Robot(mesa.Agent, ABC):
 
         for pos, info in new_percepts.items():
             self.knowledge.map[pos]["wastes"] = info["wastes"]
-
+    
     def step(self):
         self.step_agent()
 
