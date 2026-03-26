@@ -29,6 +29,7 @@ class RobotMissionModel(mesa.Model):
         self.running = True
         self.grid = mesa.space.MultiGrid(width, height, torus=False)
         self.enable_messaging = enable_messaging
+        MessageService.__instance = None
         self.__messages_service = MessageService(self)
         self.zone_cells = {1: [], 2: [], 3: []}
 
