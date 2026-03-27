@@ -167,6 +167,8 @@ class AStarFrontierNavigator:
 class NoKnowledgeSharing:
     def share(self, robot):
         return None
+    
+    def handle_messages(self, robot): pass
 
 
 class LocalKnowledgeSharing:
@@ -179,6 +181,8 @@ class LocalKnowledgeSharing:
             if other is robot or not isinstance(other, Robot):
                 continue
             robot.knowledge.merge_shared_map(other.knowledge.map)
+
+    def handle_messages(self, robot): pass
 
 class DepositKnowledgeSharing:
     def share(self, robot):
@@ -205,6 +209,26 @@ class DepositKnowledgeSharing:
             for agent in agents_to_message:
                 if agent is not robot:
                     robot.send_message(agent, MessagePerformative.INFORM_REF, deposit_info)
+
+    def handle_messages(self, robot):
+        messages = robot.get_new_messages()
+        for msg in messages:
+            performative = msg.get_performative()
+            content = msg.get_content()
+
+            if performative == MessagePerformative.INFORM_REF:
+                pos = content["pos"]
+                received_ts = content["map"][pos]["timestamp"]
+                my_info = robot.knowledge.map.get(pos)
+                my_ts = my_info.get("timestamp", -1) if my_info else -1 # vérifier que la connaissance du message est plus récente
+
+                if my_info is None or received_ts > my_ts:
+                    robot.knowledge.map[pos] = {
+                        "zone": content["map"][pos]["zone"],
+                        "wastes": content["map"][pos]["wastes"],
+                        "disposal": my_info.get("disposal", False) if my_info else False,
+                        "timestamp": received_ts
+                    }
 
 # ─── Decision policy ─────────────────────────────────────────────────────────
 
@@ -267,6 +291,8 @@ def build_behavior(version: str):
         return DecisionPolicy(NaiveNavigator(), LocalKnowledgeSharing())
     if version == "v0.0.3":
         return DecisionPolicy(AStarFrontierNavigator(), LocalKnowledgeSharing())
+    if version == "v0.1.0":
+        return DecisionPolicy(AStarFrontierNavigator(), DepositKnowledgeSharing())
     raise ValueError(f"Version inconnue : {version}. Disponibles : ['v0.0.1', 'v0.0.2', 'v0.0.3']")
 
 
@@ -294,26 +320,6 @@ class Robot(mesa.Agent, ABC):
 
     def _current_pos(self):
         return cast(tuple[int, int], self.pos)
-    
-    def handle_messages(self):
-        messages = self.get_new_messages()
-        for msg in messages:
-            performative = msg.get_performative()
-            content = msg.get_content()
-
-            if performative == MessagePerformative.INFORM_REF:
-                pos = content["pos"]
-                received_ts = content["timestamp"]
-                my_info = self.knowledge.map.get(pos)
-                my_ts = my_info.get("timestamp", -1) if my_info else -1 # vérifier que la connaissance du message est plus récente
-
-                if my_info is None or received_ts > my_ts:
-                    self.knowledge.map[pos] = {
-                        "zone": content["zone"],
-                        "wastes": content["wastes"],
-                        "disposal": my_info.get("disposal", False) if my_info else False,
-                        "timestamp": received_ts
-                    }
 
     def step_agent(self):
         self.handle_messages()
