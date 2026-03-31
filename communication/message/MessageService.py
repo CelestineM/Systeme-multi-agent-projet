@@ -38,7 +38,6 @@ class MessageService:
     def send_message(self, message):
         """ Dispatch message if instant delivery active, otherwise add the message to proceed list.
         """
-        print(message)
         if self.__instant_delivery:
     
             self.dispatch_message(message)
@@ -67,8 +66,7 @@ class MessageService:
         """
         
         for agent in self.__model.agents:
-        
-            if agent.get_name() == agent_name:
+            if hasattr(agent, "get_name") and agent.get_name() == agent_name:
             
                 return agent
 

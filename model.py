@@ -147,7 +147,7 @@ class RobotMissionModel(mesa.Model):
                 if self.can_enter(agent, new_pos):
                     self.grid.move_agent(agent, new_pos)
 
-        elif action["name"] == "pick_up":
+        elif action["name"] == "pickup":
             max_carry = getattr(agent, "max_carry", 2)
             if len(agent.carrying) >= max_carry:
                 return self.get_local_percepts(agent.pos)
