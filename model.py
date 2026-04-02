@@ -28,6 +28,8 @@ class RobotMissionModel(mesa.Model):
         super().__init__(seed=seed)
         self.running = True
         self.grid = mesa.space.MultiGrid(width, height, torus=False)
+        self.current_step = 0
+        self.deposit_events = []
         self.enable_messaging = enable_messaging
         MessageService.__instance = None
         self.__messages_service = MessageService(self)
@@ -147,7 +149,7 @@ class RobotMissionModel(mesa.Model):
                 if self.can_enter(agent, new_pos):
                     self.grid.move_agent(agent, new_pos)
 
-        elif action["name"] == "pick_up":
+        elif action["name"] == "pickup":
             max_carry = getattr(agent, "max_carry", 2)
             if len(agent.carrying) >= max_carry:
                 return self.get_local_percepts(agent.pos)
@@ -171,21 +173,49 @@ class RobotMissionModel(mesa.Model):
                 if carried.waste_type == "red":
                     self.spawn_waste("yellow", agent.pos)
                     self.spawn_waste("yellow", agent.pos)
+                    self.deposit_events.append(
+                        {
+                            "step": self.current_step,
+                            "robot_color": "red",
+                            "deposited_waste": "red",
+                            "resulting_wastes": {"yellow": 2},
+                            "position": agent.pos,
+                        }
+                    )
 
             elif agent.color == "yellow" and self.can_deposit_yellow(agent, agent.pos):
                 carried = agent.carrying.pop()
                 if carried.waste_type == "yellow":
                     self.spawn_waste("green", agent.pos)
                     self.spawn_waste("green", agent.pos)
+                    self.deposit_events.append(
+                        {
+                            "step": self.current_step,
+                            "robot_color": "yellow",
+                            "deposited_waste": "yellow",
+                            "resulting_wastes": {"green": 2},
+                            "position": agent.pos,
+                        }
+                    )
 
             elif agent.color == "green" and self.is_disposal_cell(agent.pos):
                 agent.carrying.pop()
+                self.deposit_events.append(
+                    {
+                        "step": self.current_step,
+                        "robot_color": "green",
+                        "deposited_waste": "green",
+                        "resulting_wastes": {},
+                        "position": agent.pos,
+                    }
+                )
 
         return self.get_local_percepts(agent.pos)
 
     def step(self):
         self.datacollector.collect(self)
         self.agents.shuffle_do("step")
+        self.current_step += 1
 
     def can_enter(self, agent, pos):
         if self.grid.out_of_bounds(pos):
