@@ -1,0 +1,26 @@
+{
+  "base_params": {
+    "num_robots": {"green": 2, "yellow": 2, "red": 1},
+    "num_wastes": {"green": 10, "yellow": 6, "red": 3},
+    "width": 15,
+    "height": 15,
+    "epicenters": [[7, 7], [1, 13]],
+    "rayon_zone_3": 2.5,
+    "rayon_zone_2": 5.5,
+    "seed": 11
+  },
+  "versions": ["v0.0.1", "v0.0.2", "v0.0.3"],
+  "max_steps": 1500,
+  "variants": [
+    {
+      "name": "baseline",
+      "updates": {}
+    },
+    {
+      "name": "heavy_wastes",
+      "updates": {
+        "num_wastes": {"green": 18, "yellow": 12, "red": 6}
+      }
+    }
+  ]
+}
