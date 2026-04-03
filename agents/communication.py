@@ -96,6 +96,8 @@ class SmartColorKnowledgeSharing:
                 )
 
             count += 1
+            if hasattr(robot, "metrics"):
+                robot.metrics["msg_received"] += 1
 
     def on_discover(self, robot, percepts) -> list[dict]:
         if not percepts:
