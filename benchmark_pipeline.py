@@ -187,7 +187,7 @@ def run_single(params: dict[str, Any], version: str, max_steps: int) -> dict[str
     ]
 
     with contextlib.redirect_stdout(io.StringIO()):
-        while steps < max_steps:
+        while steps < max_steps and not completed:
             current_counts = remaining_wastes(model)
             if sum(current_counts.values()) == 0:
                 completed = True

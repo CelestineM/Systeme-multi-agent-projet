@@ -6,10 +6,18 @@
 
 import mesa
 import math
+from dataclasses import dataclass
 from typing import Optional
 from agents import greenAgent, yellowAgent, redAgent
 from objects import WasteAgent, RadioactivityAgent, WasteDisposalZone
 from communication.message.MessageService import MessageService
+
+
+@dataclass
+class CommBudget:
+    """Budget de communication par step pour chaque robot."""
+    messages_out: int = 3  
+    messages_in: int = 3   
 
 AGENT_CLASSES = {
     'green': greenAgent,
@@ -23,7 +31,9 @@ class RobotMissionModel(mesa.Model):
                  rayon_zone_3: float, rayon_zone_2: float,
                  enable_messaging: bool = False, 
                  seed: Optional[int] = None,
-                 version: Optional[str] = None):
+                 version: Optional[str] = None,
+                 messages_out: int = 3,
+                 messages_in: int = 3):
         
         super().__init__(seed=seed)
         self.running = True
@@ -31,6 +41,7 @@ class RobotMissionModel(mesa.Model):
         self.current_step = 0
         self.deposit_events = []
         self.enable_messaging = enable_messaging
+        self.comm_budget = CommBudget(messages_out=messages_out, messages_in=messages_in)
         MessageService.__instance = None
         self.__messages_service = MessageService(self)
         self.zone_cells = {1: [], 2: [], 3: []}
