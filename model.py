@@ -6,10 +6,19 @@
 
 import mesa
 import math
+import statistics
+from dataclasses import dataclass
 from typing import Optional
 from agents import greenAgent, yellowAgent, redAgent
 from objects import WasteAgent, RadioactivityAgent, WasteDisposalZone
 from communication.message.MessageService import MessageService
+
+
+@dataclass
+class CommBudget:
+    """Budget de communication par tick pour chaque robot."""
+    messages_out: int = 3  # messages envoyables par tick
+    messages_in: int = 3   # messages lisibles par tick
 
 AGENT_CLASSES = {
     'green': greenAgent,
@@ -23,7 +32,9 @@ class RobotMissionModel(mesa.Model):
                  rayon_zone_3: float, rayon_zone_2: float,
                  enable_messaging: bool = False, 
                  seed: Optional[int] = None,
-                 version: Optional[str] = None):
+                 version: Optional[str] = None,
+                 messages_out: int = 3,
+                 messages_in: int = 3):
         
         super().__init__(seed=seed)
         self.running = True
@@ -31,6 +42,7 @@ class RobotMissionModel(mesa.Model):
         self.current_step = 0
         self.deposit_events = []
         self.enable_messaging = enable_messaging
+        self.comm_budget = CommBudget(messages_out=messages_out, messages_in=messages_in)
         MessageService.__instance = None
         self.__messages_service = MessageService(self)
         self.zone_cells = {1: [], 2: [], 3: []}
@@ -80,10 +92,19 @@ class RobotMissionModel(mesa.Model):
         self.datacollector = mesa.DataCollector(
             agent_reporters={"Position": "pos", "Color": "color"}
         )
+
     def get_zone(self, pos):
         cell = self.grid.get_cell_list_contents([pos])
         radio = next((obj for obj in cell if isinstance(obj, RadioactivityAgent)), None)
         return radio.zone if radio else None
+    
+    def get_agents_zone(self, zone: int):
+        zone_color = {1: "green", 2: "yellow", 3: "red"}
+        cells = self.zone_cells[zone]
+        agents = self.grid.get_cell_list_contents(cells)
+        return [a for a in agents 
+                if isinstance(a, (greenAgent, yellowAgent, redAgent)) 
+                and a.color == zone_color[zone]]
     
     def is_border_cell_of_zone(self, pos, zone, adjacent_to_zone):
         if self.get_zone(pos) != zone:
@@ -216,6 +237,67 @@ class RobotMissionModel(mesa.Model):
         self.datacollector.collect(self)
         self.agents.shuffle_do("step")
         self.current_step += 1
+
+    def collect_comm_metrics(self) -> dict:
+        """Agrège les métriques de communication et de mouvement de tous les robots."""
+        from agents import greenAgent, yellowAgent, redAgent
+        robots = [
+            a for a in self.agents
+            if isinstance(a, (greenAgent, yellowAgent, redAgent))
+        ]
+        if not robots:
+            return {}
+
+        total_steps = max(self.current_step, 1)
+        all_moves = [r.metrics["moves"] for r in robots]
+        all_pickups = [r.metrics["pickups"] for r in robots]
+        all_deposits = [r.metrics["deposits"] for r in robots]
+        all_sent = [r.metrics["msg_sent"] for r in robots]
+        all_received = [r.metrics["msg_received"] for r in robots]
+        all_syncs = [r.metrics["local_syncs"] for r in robots]
+        all_idle = [r.metrics["idle_steps"] for r in robots]
+
+        # Budget moyen consommé
+        def _mean_budget(key):
+            all_vals = [v for r in robots for v in r.metrics[key]]
+            return statistics.mean(all_vals) if all_vals else 0.0
+
+        # Ratio budget effectivement consommé vs budget max théorique
+        budget_max_out = self.comm_budget.messages_out * total_steps * len(robots)
+        budget_max_in  = self.comm_budget.messages_in  * total_steps * len(robots)
+        total_out_used = sum(v for r in robots for v in r.metrics["msg_out_budget_used"])
+        total_in_used  = sum(v for r in robots for v in r.metrics["msg_in_budget_used"])
+
+        total_wastes_cleared = sum(all_deposits)
+
+        return {
+            # Mouvements
+            "moves_total": sum(all_moves),
+            "moves_max": max(all_moves),
+            "moves_min": min(all_moves),
+            "moves_avg_per_agent": statistics.mean(all_moves),
+            "moves_avg_per_agent_per_step": statistics.mean(all_moves) / total_steps,
+            # Actions de pickup/deposit
+            "pickups_total": sum(all_pickups),
+            "deposits_total": sum(all_deposits),
+            "waste_cleared_per_step": total_wastes_cleared / total_steps,
+            # Idle steps
+            "idle_steps_total": sum(all_idle),
+            "idle_ratio": statistics.mean(all_idle) / total_steps,
+            # Communication locale
+            "local_syncs_total": sum(all_syncs),
+            "local_syncs_avg_per_step": sum(all_syncs) / total_steps,
+            # Messages envoyés/reçus - si possible
+            "msg_sent_total": sum(all_sent),
+            "msg_received_total": sum(all_received),
+            "msg_sent_per_step": sum(all_sent) / total_steps,
+            "msg_received_per_step": sum(all_received) / total_steps,
+            # Budget de communication consommé
+            "avg_msg_out_budget_used_per_step": _mean_budget("msg_out_budget_used"),
+            "avg_msg_in_budget_used_per_step": _mean_budget("msg_in_budget_used"),
+            "comm_out_overhead_ratio": total_out_used / budget_max_out if budget_max_out > 0 else 0.0,
+            "comm_in_overhead_ratio":  total_in_used  / budget_max_in  if budget_max_in  > 0 else 0.0,
+        }
 
     def can_enter(self, agent, pos):
         if self.grid.out_of_bounds(pos):

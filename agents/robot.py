@@ -2,6 +2,8 @@ from abc import ABC
 from typing import Optional, cast
 
 from communication.agent.CommunicatingAgent import CommunicatingAgent
+from communication.message.Message import Message
+from communication.message.MessagePerformative import MessagePerformative
 
 from .policy import build_behavior
 from collections import deque
@@ -9,10 +11,11 @@ from collections import deque
 from .knowledge import RobotKnowledge
 
 NEXT_COLOR = {
-        "green": None,
-        "yellow": "green",
-        "red": "yellow",
-    }
+    "green": None,
+    "yellow": "green",
+    "red": "yellow",
+}
+
 
 class Robot(CommunicatingAgent, ABC):
     _name_counter = 0
@@ -36,6 +39,17 @@ class Robot(CommunicatingAgent, ABC):
         self.carrying = []
         self.knowledge = RobotKnowledge()
         self.color = color
+        self.metrics = {
+            "moves": 0,
+            "pickups": 0,
+            "deposits": 0,
+            "msg_sent": 0,
+            "msg_received": 0,
+            "local_syncs": 0,
+            "msg_out_budget_used": [],
+            "msg_in_budget_used": [],    
+            "idle_steps": 0,            
+        }
         self.allowed_waste_types = allowed_waste_types
         self.home_zone = home_zone
         self.max_zone = home_zone
@@ -44,9 +58,8 @@ class Robot(CommunicatingAgent, ABC):
         self.split_result = split_result
         self.max_carry = max_carry
         self.behavior = build_behavior(version or "v0.0.1")
-
-    def deliberate(self) -> dict | None:
-        return self.behavior.deliberate(self)
+        self.outbox = []
+        self.inbox = []
 
     def _current_pos(self):
         return cast(tuple[int, int], self.pos)
@@ -54,38 +67,122 @@ class Robot(CommunicatingAgent, ABC):
     def step_agent(self):
         current_pos = self._current_pos()
 
+        # Perception directe
         percepts = self.model.get_local_percepts(current_pos)
         self.knowledge.update_from_percepts(percepts, None, current_pos)
 
-        if hasattr(self.behavior.communication, "on_discover"):
-            self.behavior.communication.on_discover(self, percepts)
+        # Les découvertes perçues génèrent des actions send_message
+        discover_actions = self.behavior.communication.on_discover(self, percepts)
 
-        self.behavior.communication.process_messages(self)
+        # Délibération : retourne [sync_neighbors?, read_messages?, action_physique?]
+        actions = self.behavior.deliberate(self)
 
-        action = self.deliberate()
+        # Budget de communication pour ce tick (lu depuis le modèle)
+        budget = self.model.comm_budget
+        send_budget = budget.messages_out
+        read_budget = budget.messages_in
+        send_budget_initial = send_budget
+        read_budget_initial = read_budget
 
-        new_percepts = self.model.do(self, action)
-        new_pos = self._current_pos()
-        self.knowledge.update_from_percepts(new_percepts, action, new_pos)
+        # Exécution des actions de communication découverte (budgétée)
+        for action in discover_actions:
+            if action["name"] == "send_message":
+                if send_budget > 0:
+                    self._do_send(action["to"], action["content"])
+                    send_budget -= 1
 
-        if action:
-            action_name = action.get("name")
-            print(f"[DEBUG] {self.get_name()} action={action_name}")
+        # Exécution de la liste principale d'actions
+        physical_action_taken = False
+        for action in actions:
+            name = action.get("name")
 
-            if action_name == "pickup" and hasattr(self.behavior.communication, "on_pickup"):
-                picked_color = self.color
-                self.behavior.communication.on_pickup(self, new_pos, picked_color)
+            if name == "sync_neighbors":
+                # Gratuit : pas de budget consommé
+                self._sync_neighbors()
+                self.metrics["local_syncs"] += 1
 
-            if action_name == "deposit" and hasattr(self.behavior.communication, "on_deposit"):
-                deposited_color = NEXT_COLOR.get(self.color)
-                self.behavior.communication.on_deposit(self, new_pos, deposited_color)
+            elif name == "read_messages":
+                # Budgété : lire au plus read_budget messages
+                msgs_before = self.metrics["msg_received"]
+                self.behavior.communication.process_messages(self, limit=read_budget)
+                msgs_read = self.metrics["msg_received"] - msgs_before
+                read_budget = max(0, read_budget - msgs_read)
 
-        for pos, info in new_percepts.items():
-            if pos in self.knowledge.map:
-                self.knowledge.map[pos]["wastes"] = info["wastes"]
+            elif name == "send_message":
+                if send_budget > 0:
+                    self._do_send(action["to"], action["content"])
+                    send_budget -= 1
+
+            elif name in ("move", "pickup", "deposit"):
+                new_percepts = self.model.do(self, action)
+                new_pos = self._current_pos()
+                self.knowledge.update_from_percepts(new_percepts, action, new_pos)
+
+                for pos, info in new_percepts.items():
+                    if pos in self.knowledge.map:
+                        self.knowledge.map[pos]["wastes"] = info["wastes"]
+
+                print(f"[DEBUG] {self.get_name()} action={name}")
+
+                if name == "move":
+                    self.metrics["moves"] += 1
+                    physical_action_taken = True
+                elif name == "pickup":
+                    self.metrics["pickups"] += 1
+                    physical_action_taken = True
+                elif name == "deposit":
+                    self.metrics["deposits"] += 1
+                    physical_action_taken = True
+
+                # Hooks post-action : génèrent des send_message budgétés
+                if name == "pickup":
+                    post_actions = self.behavior.communication.on_pickup(
+                        self, new_pos, self.color
+                    )
+                elif name == "deposit":
+                    deposited_color = NEXT_COLOR.get(self.color)
+                    post_actions = self.behavior.communication.on_deposit(
+                        self, new_pos, deposited_color
+                    )
+                else:
+                    post_actions = []
+
+                for pa in post_actions:
+                    if pa["name"] == "send_message" and send_budget > 0:
+                        self._do_send(pa["to"], pa["content"])
+                        send_budget -= 1
+
+        if not physical_action_taken:
+            self.metrics["idle_steps"] += 1
+
+        # Enregistrement de la consommation de budget ce step
+        self.metrics["msg_out_budget_used"].append(send_budget_initial - send_budget)
+        self.metrics["msg_in_budget_used"].append(read_budget_initial - read_budget)
 
     def step(self):
         self.step_agent()
+
+    def _sync_neighbors(self):
+        """Fusion locale de cartes avec les voisins immédiats (gratuite)."""
+        current_pos = self._current_pos()
+        neighbors = self.model.grid.get_neighbors(
+            current_pos, moore=False, include_center=False, radius=1
+        )
+        for other in neighbors:
+            if other is self or not hasattr(other, "knowledge"):
+                continue
+            self.knowledge.merge_shared_map(other.knowledge.map)
+
+    def _do_send(self, to: str, content: dict):
+        """Envoie effectivement un message (consomme 1 crédit send_budget)."""
+        print(f"[MSG] {self.get_name()} → {to} : {content.get('type')} @ {content.get('position')}")
+        self.metrics["msg_sent"] += 1
+        self.send_message(Message(
+            self.get_name(),
+            to,
+            MessagePerformative.INFORM_REF,
+            content,
+        ))
 
     @property
     def knowledge_dict(self):
@@ -133,14 +230,14 @@ class Robot(CommunicatingAgent, ABC):
                 continue
             visited.add(pos)
             x, y = pos
-            for dx, dy in [(1,0), (-1,0), (0,1), (0,-1)]:
+            for dx, dy in [(1, 0), (-1, 0), (0, 1), (0, -1)]:
                 nxt = (x + dx, y + dy)
                 if nxt in visited:
                     continue
                 if not self.model.can_enter(self, nxt):
                     continue
                 queue.append((nxt, dist + 1))
-        return float("inf")  # unreachable
+        return float("inf")
 
     def closest_known_deposit_cell(self):
         current_pos = self._current_pos()
@@ -154,6 +251,7 @@ class Robot(CommunicatingAgent, ABC):
             if not candidates:
                 return None
             return min(candidates, key=lambda pos: self.shortest_path_distance(pos, current_pos))
+
         candidates = set()
         for pos, info in self.knowledge.map.items():
             if info.get("zone") == self.deposit_zone:
