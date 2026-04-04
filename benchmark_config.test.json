@@ -7,7 +7,9 @@
     "epicenters": [[7, 7], [1, 13]],
     "rayon_zone_3": 2.5,
     "rayon_zone_2": 5.5,
-    "seed": 11
+    "seed": 11,
+    "messages_out": 3,
+    "messages_in": 3
   },
   "versions": ["v0.0.1", "v0.0.2", "v0.0.3"],
   "max_steps": 1500,

@@ -99,6 +99,7 @@ def remaining_wastes(model: RobotMissionModel) -> dict[str, int]:
 def _build_variants(config: dict[str, Any]) -> list[dict[str, Any]]:
     explicit_variants = config.get("variants", [{"name": "baseline", "updates": {}}])
     robot_sweep = config.get("robot_range_sweep")
+
     if not robot_sweep:
         return explicit_variants
 
@@ -107,26 +108,36 @@ def _build_variants(config: dict[str, Any]) -> list[dict[str, Any]]:
         for color in ROBOT_COLORS
     }
 
-    generated = []
-    for green_count, yellow_count, red_count in itertools.product(
-        range(min_max["green"][0], min_max["green"][1] + 1),
-        range(min_max["yellow"][0], min_max["yellow"][1] + 1),
-        range(min_max["red"][0], min_max["red"][1] + 1),
-    ):
-        generated.append(
-            {
-                "name": f"robots_g{green_count}_y{yellow_count}_r{red_count}",
-                "updates": {
-                    "num_robots": {
-                        "green": green_count,
-                        "yellow": yellow_count,
-                        "red": red_count,
-                    }
-                },
-            }
-        )
+    combined_variants = []
 
-    return explicit_variants + generated
+    for explicit_variant in explicit_variants:
+        base_name = explicit_variant["name"]
+        base_updates = explicit_variant.get("updates", {})
+
+        for green_count, yellow_count, red_count in itertools.product(
+            range(min_max["green"][0], min_max["green"][1] + 1),
+            range(min_max["yellow"][0], min_max["yellow"][1] + 1),
+            range(min_max["red"][0], min_max["red"][1] + 1),
+        ):
+            robot_updates = {
+                "num_robots": {
+                    "green": green_count,
+                    "yellow": yellow_count,
+                    "red": red_count,
+                }
+            }
+            merged_updates = {
+                **base_updates,
+                **robot_updates,
+            }
+            combined_variants.append(
+                {
+                    "name": f"{base_name}_robots_g{green_count}_y{yellow_count}_r{red_count}",
+                    "updates": merged_updates,
+                }
+            )
+
+    return combined_variants
 
 
 def _build_seed_list(config: dict[str, Any], base_params: dict[str, Any]) -> list[int]:
@@ -176,7 +187,7 @@ def run_single(params: dict[str, Any], version: str, max_steps: int) -> dict[str
     ]
 
     with contextlib.redirect_stdout(io.StringIO()):
-        while steps < max_steps:
+        while steps < max_steps and not completed:
             current_counts = remaining_wastes(model)
             if sum(current_counts.values()) == 0:
                 completed = True
@@ -209,6 +220,8 @@ def run_single(params: dict[str, Any], version: str, max_steps: int) -> dict[str
     color_clear_steps = _color_clear_steps(timeline)
     change_points = _waste_change_points(timeline)
 
+    comm_metrics = model.collect_comm_metrics()
+
     return {
         "version": version,
         "steps": steps,
@@ -226,11 +239,13 @@ def run_single(params: dict[str, Any], version: str, max_steps: int) -> dict[str
         "deposit_events": deposit_events,
         "waste_timeline": timeline,
         "waste_change_points": change_points,
+        "comm_metrics": comm_metrics,
     }
 
 
 def _compact_run_row(row: dict[str, Any]) -> dict[str, Any]:
     clear_steps = row["color_clear_steps"]
+    cm = row.get("comm_metrics", {})
     return {
         "variant": row["variant"],
         "version": row["version"],
@@ -249,6 +264,30 @@ def _compact_run_row(row: dict[str, Any]) -> dict[str, Any]:
         "green_clear_step": clear_steps["green"],
         "yellow_clear_step": clear_steps["yellow"],
         "red_clear_step": clear_steps["red"],
+        # Mouvements
+        "moves_total": cm.get("moves_total"),
+        "moves_max": cm.get("moves_max"),
+        "moves_min": cm.get("moves_min"),
+        "moves_avg_per_agent": cm.get("moves_avg_per_agent"),
+        "moves_avg_per_agent_per_step": cm.get("moves_avg_per_agent_per_step"),
+        # Actions de pickup/deposit
+        "pickups_total": cm.get("pickups_total"),
+        "deposits_total": cm.get("deposits_total"),
+        "waste_cleared_per_step": cm.get("waste_cleared_per_step"),
+        "idle_ratio": cm.get("idle_ratio"),
+        # Communication locale
+        "local_syncs_total": cm.get("local_syncs_total"),
+        "local_syncs_avg_per_step": cm.get("local_syncs_avg_per_step"),
+        # Messages envoyés/reçus - si possible
+        "msg_sent_total": cm.get("msg_sent_total"),
+        "msg_received_total": cm.get("msg_received_total"),
+        "msg_sent_per_step": cm.get("msg_sent_per_step"),
+        "msg_received_per_step": cm.get("msg_received_per_step"),
+        # Budget de communication consommé
+        "avg_msg_out_budget_used_per_step": cm.get("avg_msg_out_budget_used_per_step"),
+        "avg_msg_in_budget_used_per_step": cm.get("avg_msg_in_budget_used_per_step"),
+        "comm_out_overhead_ratio": cm.get("comm_out_overhead_ratio"),
+        "comm_in_overhead_ratio": cm.get("comm_in_overhead_ratio"),
     }
 
 
@@ -370,6 +409,10 @@ def run_benchmark(config: dict[str, Any]) -> dict[str, Any]:
             if baseline_avg and avg_steps is not None and baseline_avg > 0:
                 gain = ((baseline_avg - avg_steps) / baseline_avg) * 100
 
+            def _avg_cm(key):
+                vals = [r["comm_metrics"].get(key) for r in rows if r.get("comm_metrics") and r["comm_metrics"].get(key) is not None]
+                return statistics.mean(vals) if vals else None
+
             summary_row = {
                 "variant": variant_name,
                 "version": version,
@@ -396,6 +439,30 @@ def run_benchmark(config: dict[str, Any]) -> dict[str, Any]:
                 "marginal_gain_vs_baseline_steps_pct": gain,
                 "feasible": True,
                 "errors": [],
+                # Mouvements
+                "avg_moves_total": _avg_cm("moves_total"),
+                "avg_moves_max": _avg_cm("moves_max"),
+                "avg_moves_min": _avg_cm("moves_min"),
+                "avg_moves_per_agent": _avg_cm("moves_avg_per_agent"),
+                "avg_moves_per_agent_per_step": _avg_cm("moves_avg_per_agent_per_step"),
+                # Actions de pickup/deposit
+                "avg_pickups_total": _avg_cm("pickups_total"),
+                "avg_deposits_total": _avg_cm("deposits_total"),
+                "avg_waste_cleared_per_step": _avg_cm("waste_cleared_per_step"),
+                "avg_idle_ratio": _avg_cm("idle_ratio"),
+                # Communication locale
+                "avg_local_syncs_total": _avg_cm("local_syncs_total"),
+                "avg_local_syncs_per_step": _avg_cm("local_syncs_avg_per_step"),
+                # Messages envoyés/reçus - si possible
+                "avg_msg_sent_total": _avg_cm("msg_sent_total"),
+                "avg_msg_received_total": _avg_cm("msg_received_total"),
+                "avg_msg_sent_per_step": _avg_cm("msg_sent_per_step"),
+                "avg_msg_received_per_step": _avg_cm("msg_received_per_step"),
+                # Budget de communication consommé
+                "avg_msg_out_budget_used_per_step": _avg_cm("avg_msg_out_budget_used_per_step"),
+                "avg_msg_in_budget_used_per_step": _avg_cm("avg_msg_in_budget_used_per_step"),
+                "avg_comm_out_overhead_ratio": _avg_cm("comm_out_overhead_ratio"),
+                "avg_comm_in_overhead_ratio": _avg_cm("comm_in_overhead_ratio"),
             }
             summary_rows.append(summary_row)
             variant_summary_rows.append(summary_row)

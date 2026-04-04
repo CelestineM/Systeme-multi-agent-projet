@@ -9,9 +9,28 @@ class DecisionPolicy:
         self.navigator = navigator
         self.communication = communication
 
-    def deliberate(self, robot) -> dict | None:
-        self.communication.share(robot)
+    def deliberate(self, robot) -> list[dict]:
+        """
+        Retourne une liste ordonnée d'actions pour ce tick :
+          1. Actions de communication (share/read) — budgétées séparément
+          2. Une action physique (move / pickup / deposit)
+          3. Actions send_message issues de on_discover — budgétées séparément
+        Les actions send_message issues de pickup/deposit sont ajoutées dans
+        robot._execute() directement après l'exécution physique.
+        """
+        actions = []
 
+        # 1. Communication entrante + sync locale
+        actions.extend(self.communication.share(robot))
+
+        # 2. Décision physique
+        physical = self._decide(robot)
+        if physical:
+            actions.append(physical)
+
+        return actions
+
+    def _decide(self, robot) -> dict | None:
         current_pos = robot._current_pos()
         model = cast(Any, robot.model)
         here = robot.knowledge.map.get(
