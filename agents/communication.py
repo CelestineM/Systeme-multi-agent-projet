@@ -104,7 +104,7 @@ class SmartColorKnowledgeSharing:
             return []
 
         actions = []
-        receivers = self._get_local_receivers(robot)
+        receivers = self._get_all_robots(robot)
 
         for pos, info in percepts.items():
             wastes = list(info.get("wastes", []))

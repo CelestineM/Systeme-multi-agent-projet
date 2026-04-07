@@ -66,48 +66,35 @@ class Robot(CommunicatingAgent, ABC):
 
     def step_agent(self):
         current_pos = self._current_pos()
-
-        # Perception directe
         percepts = self.model.get_local_percepts(current_pos)
         self.knowledge.update_from_percepts(percepts, None, current_pos)
 
-        # Les découvertes perçues génèrent des actions send_message
         discover_actions = self.behavior.communication.on_discover(self, percepts)
-
-        # Délibération : retourne [sync_neighbors?, read_messages?, action_physique?]
         actions = self.behavior.deliberate(self)
 
-        # Budget de communication pour ce tick (lu depuis le modèle)
         budget = self.model.comm_budget
         send_budget = budget.messages_out
         read_budget = budget.messages_in
         send_budget_initial = send_budget
         read_budget_initial = read_budget
 
-        # Exécution des actions de communication découverte (budgétée)
         for action in discover_actions:
             if action["name"] == "send_message":
                 if send_budget > 0:
                     self._do_send(action["to"], action["content"])
                     send_budget -= 1
 
-        # Exécution de la liste principale d'actions
         physical_action_taken = False
         for action in actions:
             name = action.get("name")
-
             if name == "sync_neighbors":
-                # Gratuit : pas de budget consommé
                 self._sync_neighbors()
                 self.metrics["local_syncs"] += 1
-
             elif name == "read_messages":
-                # Budgété : lire au plus read_budget messages
                 msgs_before = self.metrics["msg_received"]
                 self.behavior.communication.process_messages(self, limit=read_budget)
                 msgs_read = self.metrics["msg_received"] - msgs_before
                 read_budget = max(0, read_budget - msgs_read)
-
             elif name == "send_message":
                 if send_budget > 0:
                     self._do_send(action["to"], action["content"])
@@ -122,7 +109,7 @@ class Robot(CommunicatingAgent, ABC):
                     if pos in self.knowledge.map:
                         self.knowledge.map[pos]["wastes"] = info["wastes"]
 
-                print(f"[DEBUG] {self.get_name()} action={name}")
+                self.logger.debug(f"{self.get_name()} action={name}")
 
                 if name == "move":
                     self.metrics["moves"] += 1
@@ -134,7 +121,6 @@ class Robot(CommunicatingAgent, ABC):
                     self.metrics["deposits"] += 1
                     physical_action_taken = True
 
-                # Hooks post-action : génèrent des send_message budgétés
                 if name == "pickup":
                     post_actions = self.behavior.communication.on_pickup(
                         self, new_pos, self.color
@@ -155,7 +141,6 @@ class Robot(CommunicatingAgent, ABC):
         if not physical_action_taken:
             self.metrics["idle_steps"] += 1
 
-        # Enregistrement de la consommation de budget ce step
         self.metrics["msg_out_budget_used"].append(send_budget_initial - send_budget)
         self.metrics["msg_in_budget_used"].append(read_budget_initial - read_budget)
 
@@ -175,7 +160,7 @@ class Robot(CommunicatingAgent, ABC):
 
     def _do_send(self, to: str, content: dict):
         """Envoie effectivement un message (consomme 1 crédit send_budget)."""
-        print(f"[MSG] {self.get_name()} → {to} : {content.get('type')} @ {content.get('position')}")
+        self.logger.debug(f"{self.get_name()} → {to} : {content.get('type')} @ {content.get('position')}")
         self.metrics["msg_sent"] += 1
         self.send_message(Message(
             self.get_name(),
