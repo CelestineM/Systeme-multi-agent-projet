@@ -2,6 +2,18 @@
 **Groupe 3** · Malo Chauvel, Constance Piquet, Célestine Martin  
 ---
 
+> Interface interactive : le README GitHub ne peut pas embarquer de vrais selecteurs JS.  
+> Le depot fournit donc un dashboard HTML autonome genere depuis les logs TensorBoard :
+>
+> ```bash
+> pip install -r requirements.txt
+> python3 generate_benchmark_dashboard.py --logdir tb_logs --output docs/index.html
+> ```
+>
+> Ouvre ensuite `docs/index.html` localement, ou publie `docs/` avec GitHub Pages.
+> L'interface permet de choisir `scenario`, `g`, `y`, `r`, puis affiche toutes les metriques
+> du variant selectionne en comparant `v0.0.1`, `v0.0.2` et `v0.0.3`.
+
 ## Sommaire
 
 

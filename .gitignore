@@ -3,3 +3,4 @@ venv/*
 __pycache__/
 *.pyc
 benchmark_outputs/
+_vendor/

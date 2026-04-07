@@ -6,3 +6,4 @@ altair
 starlette<0.36
 solara
 networkx
+tensorboard
