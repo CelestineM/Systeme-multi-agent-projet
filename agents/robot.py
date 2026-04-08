@@ -1,4 +1,5 @@
 from abc import ABC
+from asyncio.log import logger
 from typing import Optional, cast
 
 from communication.agent.CommunicatingAgent import CommunicatingAgent
@@ -60,6 +61,7 @@ class Robot(CommunicatingAgent, ABC):
         self.behavior = build_behavior(version or "v0.0.1")
         self.outbox = []
         self.inbox = []
+        self.logger = logger.getChild(self.get_name())
 
     def _current_pos(self):
         return cast(tuple[int, int], self.pos)

@@ -7,3 +7,5 @@ starlette<0.36
 solara
 networkx
 tensorboard
+setuptools==81.0
+tqdm

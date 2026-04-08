@@ -1,33 +1,27 @@
 #!/usr/bin/env python3
 """
-Génère un dashboard HTML interactif à partir des logs TensorBoard par variant.
+Generate an interactive HTML dashboard directly from benchmark_report.json.
 
-Le README GitHub ne peut pas embarquer une vraie interface JS. La bonne approche
-est donc :
-1. lire les `.tfevents`,
-2. construire une page HTML autonome avec sélecteurs,
-3. lier cette page depuis le README.
+The report can be very large because of detailed timelines in `results`, so this
+script extracts only `meta` and `results_compact` from the JSON stream.
 
 Usage
 -----
-    python3 generate_benchmark_dashboard.py --logdir tb_logs --output docs/index.html
+    python3 generate_benchmark_dashboard.py \
+        --report benchmark_outputs/benchmark_report.json \
+        --output docs/index.html
 """
 
 from __future__ import annotations
 
 import argparse
+import io
 import json
+import math
 import re
+from collections import defaultdict
 from pathlib import Path
-
-try:
-    from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
-except ImportError as exc:
-    raise SystemExit(
-        "Le package `tensorboard` est requis. Installe-le avec "
-        "`pip install -r requirements.txt` ou `pip install tensorboard`."
-    ) from exc
-
+from typing import Any, TextIO
 
 VERSION_ORDER = ["v0.0.1", "v0.0.2", "v0.0.3"]
 VERSION_META = {
@@ -48,52 +42,93 @@ VERSION_META = {
     },
 }
 
+# (field_in_results_compact, normalized_metric_tag)
+METRIC_SPECS = [
+    # Efficiency
+    ("steps", "efficiency/steps"),
+    ("first_deposit_step", "efficiency/first_deposit_step"),
+    ("avg_wait_between_deposits", "efficiency/avg_wait_between_deposits"),
+    ("waste_cleared_per_step", "efficiency/waste_cleared_per_step"),
+    ("green_clear_step", "efficiency/green_clear_step"),
+    ("yellow_clear_step", "efficiency/yellow_clear_step"),
+    ("red_clear_step", "efficiency/red_clear_step"),
+    ("deposit_event_count", "efficiency/deposit_event_count"),
+    # Movement
+    ("moves_total", "movement/moves_total"),
+    ("moves_avg_per_agent", "movement/moves_avg_per_agent"),
+    ("moves_avg_per_agent_per_step", "movement/moves_avg_per_agent_per_step"),
+    ("moves_max", "movement/moves_max"),
+    ("moves_min", "movement/moves_min"),
+    ("pickups_total", "movement/pickups_total"),
+    ("deposits_total", "movement/deposits_total"),
+    ("idle_steps_total", "movement/idle_steps_total"),
+    ("idle_ratio", "movement/idle_ratio"),
+    # Communication
+    ("msg_sent_total", "communication/msg_sent_total"),
+    ("msg_received_total", "communication/msg_received_total"),
+    ("msg_sent_per_step", "communication/msg_sent_per_step"),
+    ("msg_received_per_step", "communication/msg_received_per_step"),
+    (
+        "avg_msg_out_budget_used_per_step",
+        "communication/msg_out_budget_used_per_step",
+    ),
+    ("avg_msg_in_budget_used_per_step", "communication/msg_in_budget_used_per_step"),
+    ("comm_out_overhead_ratio", "communication/comm_out_overhead_ratio"),
+    ("comm_in_overhead_ratio", "communication/comm_in_overhead_ratio"),
+    ("local_syncs_total", "communication/local_syncs_total"),
+    ("local_syncs_avg_per_step", "communication/local_syncs_avg_per_step"),
+    # Completion
+    ("completed", "completion/success_rate"),
+    ("remaining_total", "completion/remaining_wastes"),
+    ("duration_sec", "completion/duration_sec"),
+]
+
 METRIC_META = {
-    "efficiency/total_steps": {
+    "efficiency/steps": {
         "label": "Total steps",
-        "category": "Efficacité",
+        "category": "Efficacite",
         "lower_is_better": True,
         "format": "int",
     },
     "efficiency/first_deposit_step": {
         "label": "Premier depot",
-        "category": "Efficacité",
+        "category": "Efficacite",
         "lower_is_better": True,
         "format": "int",
     },
     "efficiency/avg_wait_between_deposits": {
         "label": "Attente moyenne entre depots",
-        "category": "Efficacité",
+        "category": "Efficacite",
         "lower_is_better": True,
         "format": "float2",
     },
     "efficiency/waste_cleared_per_step": {
         "label": "Dechets nettoyes par step",
-        "category": "Efficacité",
+        "category": "Efficacite",
         "lower_is_better": False,
         "format": "float3",
     },
     "efficiency/green_clear_step": {
         "label": "Step de nettoyage vert",
-        "category": "Efficacité",
+        "category": "Efficacite",
         "lower_is_better": True,
         "format": "int",
     },
     "efficiency/yellow_clear_step": {
         "label": "Step de nettoyage jaune",
-        "category": "Efficacité",
+        "category": "Efficacite",
         "lower_is_better": True,
         "format": "int",
     },
     "efficiency/red_clear_step": {
         "label": "Step de nettoyage rouge",
-        "category": "Efficacité",
+        "category": "Efficacite",
         "lower_is_better": True,
         "format": "int",
     },
     "efficiency/deposit_event_count": {
         "label": "Nombre de depots",
-        "category": "Efficacité",
+        "category": "Efficacite",
         "lower_is_better": False,
         "format": "int",
     },
@@ -137,6 +172,12 @@ METRIC_META = {
         "label": "Depots totaux",
         "category": "Mouvements",
         "lower_is_better": False,
+        "format": "int",
+    },
+    "movement/idle_steps_total": {
+        "label": "Steps inactifs (total)",
+        "category": "Mouvements",
+        "lower_is_better": True,
         "format": "int",
     },
     "movement/idle_ratio": {
@@ -205,7 +246,7 @@ METRIC_META = {
         "lower_is_better": None,
         "format": "float3",
     },
-    "completion/completed": {
+    "completion/success_rate": {
         "label": "Taux de completion",
         "category": "Completion",
         "lower_is_better": False,
@@ -238,7 +279,7 @@ def _version_sort_key(version: str) -> tuple[int, str]:
         return (len(VERSION_ORDER), version)
 
 
-def _variant_meta(name: str) -> dict:
+def _variant_meta(name: str) -> dict[str, Any]:
     match = VARIANT_RE.match(name)
     if not match:
         return {
@@ -262,71 +303,191 @@ def _variant_meta(name: str) -> dict:
     }
 
 
-def _normalize_tag(tag: str, variant: str, version: str) -> str | None:
-    prefix = f"{variant}/{version}/"
-    if tag.startswith(prefix):
-        normalized = tag[len(prefix) :]
-        if normalized.endswith(("__mean", "__min", "__max")):
+def _to_numeric(field: str, value: Any) -> float | None:
+    if value is None:
+        return None
+    if field == "completed":
+        return 1.0 if bool(value) else 0.0
+    if isinstance(value, bool):
+        return 1.0 if value else 0.0
+    if isinstance(value, (int, float)):
+        float_value = float(value)
+        if math.isnan(float_value) or math.isinf(float_value):
             return None
-        return normalized
+        return float_value
     return None
 
 
-def _load_scalars(version_dir: Path, variant: str, version: str) -> dict[str, list[dict[str, float]]]:
-    accumulator = EventAccumulator(str(version_dir), size_guidance={"scalars": 0})
-    accumulator.Reload()
+def _parse_json_block_from_stream(initial: str, stream: TextIO, key: str) -> Any:
+    cursor_text = initial
+    cursor = 0
 
-    metrics: dict[str, list[dict[str, float]]] = {}
-    for tag in accumulator.Tags().get("scalars", []):
-        normalized = _normalize_tag(tag, variant, version)
-        if normalized is None:
+    while True:
+        while cursor < len(cursor_text) and cursor_text[cursor].isspace():
+            cursor += 1
+        if cursor < len(cursor_text):
+            opener = cursor_text[cursor]
+            cursor += 1
+            break
+        next_line = stream.readline()
+        if not next_line:
+            raise ValueError(f"No value found for key '{key}'.")
+        cursor_text = next_line
+        cursor = 0
+
+    if opener not in "[{":
+        decoder = json.JSONDecoder()
+        value, _ = decoder.raw_decode(opener + cursor_text[cursor:])
+        return value
+
+    closer = "]" if opener == "[" else "}"
+    depth = 1
+    in_string = False
+    escape = False
+    collector = io.StringIO()
+    collector.write(opener)
+
+    def consume(text: str) -> bool:
+        nonlocal depth, in_string, escape
+        for ch in text:
+            collector.write(ch)
+            if in_string:
+                if escape:
+                    escape = False
+                elif ch == "\\":
+                    escape = True
+                elif ch == '"':
+                    in_string = False
+                continue
+
+            if ch == '"':
+                in_string = True
+            elif ch == opener:
+                depth += 1
+            elif ch == closer:
+                depth -= 1
+                if depth == 0:
+                    return True
+        return False
+
+    if consume(cursor_text[cursor:]):
+        return json.loads(collector.getvalue())
+
+    while True:
+        chunk = stream.read(1024 * 1024)
+        if not chunk:
+            break
+        if consume(chunk):
+            return json.loads(collector.getvalue())
+
+    raise ValueError(f"Could not parse JSON block for key '{key}'.")
+
+
+def _extract_top_level_value(report_path: Path, key: str) -> Any:
+    needle = f'"{key}":'
+    with report_path.open("r", encoding="utf-8") as stream:
+        for line in stream:
+            position = line.find(needle)
+            if position == -1:
+                continue
+            initial = line[position + len(needle) :]
+            return _parse_json_block_from_stream(initial, stream, key)
+    raise KeyError(f"Key '{key}' not found in {report_path}.")
+
+
+def _load_report_sections(report_path: Path) -> tuple[list[str], list[dict[str, Any]], str | None]:
+    meta = _extract_top_level_value(report_path, "meta")
+    runs = _extract_top_level_value(report_path, "results_compact")
+
+    if not isinstance(meta, dict):
+        raise TypeError("`meta` must be an object in benchmark_report.json")
+    if not isinstance(runs, list):
+        raise TypeError("`results_compact` must be an array in benchmark_report.json")
+
+    versions = [str(v) for v in meta.get("versions", []) if isinstance(v, str)]
+    generated_at = meta.get("generated_at") if isinstance(meta.get("generated_at"), str) else None
+
+    rows = [row for row in runs if isinstance(row, dict)]
+    if not versions:
+        versions = sorted(
+            {str(row.get("version")) for row in rows if row.get("version")},
+            key=_version_sort_key,
+        )
+
+    return versions, rows, generated_at
+
+
+def load_dashboard_data(report_path: Path) -> dict[str, Any]:
+    versions_from_meta, rows, generated_at = _load_report_sections(report_path)
+
+    grouped: dict[str, dict[str, list[dict[str, Any]]]] = defaultdict(lambda: defaultdict(list))
+    for row in rows:
+        variant = row.get("variant")
+        version = row.get("version")
+        if not variant or not version:
             continue
+        grouped[str(variant)][str(version)].append(row)
 
-        events = accumulator.Scalars(tag)
-        if not events:
-            continue
+    versions_seen = {version for per_variant in grouped.values() for version in per_variant.keys()}
+    ordered_versions = sorted(set(versions_from_meta) | versions_seen, key=_version_sort_key)
 
-        metrics[normalized] = [
-            {"step": int(event.step), "value": float(event.value)}
-            for event in events
-        ]
-    return metrics
-
-
-def load_dashboard_data(logdir: Path) -> dict:
-    variants: dict[str, dict] = {}
+    variants: dict[str, Any] = {}
     scenarios: set[str] = set()
     robot_values = {"green": set(), "yellow": set(), "red": set()}
     available_metrics: set[str] = set()
-    versions_seen: set[str] = set()
 
-    for variant_dir in sorted(logdir.iterdir()):
-        if not variant_dir.is_dir() or variant_dir.name.startswith("_"):
-            continue
-
-        version_dirs = [
-            child for child in variant_dir.iterdir()
-            if child.is_dir() and child.name.startswith("v")
-        ]
-        if not version_dirs:
-            continue
-
-        version_dirs.sort(key=lambda path: _version_sort_key(path.name))
-        variant_name = variant_dir.name
+    for variant_name in sorted(grouped.keys()):
         variant_meta = _variant_meta(variant_name)
         scenarios.add(variant_meta["scenario"])
+
         for color in ("green", "yellow", "red"):
             value = variant_meta[color]
             if value is not None:
                 robot_values[color].add(value)
 
-        versions_payload = {}
-        for version_dir in version_dirs:
-            version = version_dir.name
-            versions_seen.add(version)
-            metrics = _load_scalars(version_dir, variant_name, version)
-            available_metrics.update(metrics.keys())
-            versions_payload[version] = metrics
+        versions_payload: dict[str, Any] = {}
+        for version in ordered_versions:
+            run_rows = list(grouped[variant_name].get(version, []))
+            run_rows.sort(
+                key=lambda row: (
+                    int(row.get("run_index", 10**9)) if str(row.get("run_index", "")).isdigit() else 10**9,
+                    int(row.get("seed", 10**9)) if str(row.get("seed", "")).isdigit() else 10**9,
+                )
+            )
+
+            metrics_payload: dict[str, list[dict[str, Any]]] = {}
+            for field, metric in METRIC_SPECS:
+                points = []
+                for index, row in enumerate(run_rows):
+                    value = _to_numeric(field, row.get(field))
+                    if value is None:
+                        continue
+
+                    run_index = row.get("run_index")
+                    if isinstance(run_index, int):
+                        step = run_index
+                    elif isinstance(run_index, str) and run_index.isdigit():
+                        step = int(run_index)
+                    else:
+                        step = index
+
+                    point: dict[str, Any] = {
+                        "step": step,
+                        "value": value,
+                    }
+                    if row.get("seed") is not None:
+                        point["seed"] = row.get("seed")
+                    points.append(point)
+
+                if points:
+                    points.sort(key=lambda point: point["step"])
+                    metrics_payload[metric] = points
+                    available_metrics.add(metric)
+
+            versions_payload[version] = {
+                "metrics": metrics_payload,
+                "expected_runs": len(run_rows),
+            }
 
         variants[variant_name] = {
             "meta": variant_meta,
@@ -338,11 +499,14 @@ def load_dashboard_data(logdir: Path) -> dict:
         sorted(metric for metric in available_metrics if metric not in METRIC_ORDER)
     )
 
-    ordered_versions = sorted(versions_seen, key=_version_sort_key)
     return {
-        "generated_from": str(logdir),
+        "generated_from": str(report_path),
+        "generated_at": generated_at,
         "versions": ordered_versions,
-        "version_meta": {ver: VERSION_META.get(ver, {"label": ver, "subtitle": "", "color": "#64748b"}) for ver in ordered_versions},
+        "version_meta": {
+            ver: VERSION_META.get(ver, {"label": ver, "subtitle": "", "color": "#64748b"})
+            for ver in ordered_versions
+        },
         "metrics": ordered_metrics,
         "metric_meta": {
             metric: METRIC_META.get(
@@ -399,7 +563,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     }
 
     main {
-      max-width: 1400px;
+      max-width: 1480px;
       margin: 0 auto;
       padding: 32px 20px 56px;
     }
@@ -425,7 +589,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       margin: 0;
       color: var(--muted);
       font-size: 1rem;
-      max-width: 880px;
+      max-width: 980px;
       line-height: 1.6;
     }
 
@@ -552,6 +716,9 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     .version-card h3 {
       margin: 0 0 6px;
       font-size: 1rem;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
     }
 
     .version-card p {
@@ -559,6 +726,36 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       color: var(--muted);
       font-size: 0.88rem;
       line-height: 1.45;
+    }
+
+    .plot3d-panel {
+      margin-bottom: 16px;
+    }
+
+    .plot3d-controls {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+
+    .plot3d {
+      min-height: 420px;
+      border-radius: 16px;
+      background: linear-gradient(180deg, rgba(248,250,252,0.96), rgba(241,245,249,0.86));
+      border: 1px solid rgba(148, 163, 184, 0.18);
+      overflow: hidden;
+    }
+
+    .plot3d-empty {
+      min-height: 420px;
+      display: grid;
+      place-items: center;
+      color: var(--muted);
+      font-size: 0.95rem;
+      line-height: 1.5;
+      padding: 12px;
+      text-align: center;
     }
 
     .metrics-grid {
@@ -710,6 +907,12 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       .hero {
         padding: 22px;
       }
+      .plot3d {
+        min-height: 360px;
+      }
+      .plot3d-empty {
+        min-height: 360px;
+      }
     }
   </style>
 </head>
@@ -720,8 +923,9 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       <p>
         Cette page compare automatiquement <strong>v0.0.1</strong>, <strong>v0.0.2</strong>
         et <strong>v0.0.3</strong> pour un variant donne. Les selecteurs de gauche
-        pilotent le choix du scenario et de la composition en robots, puis
-        <strong>toutes les metriques</strong> du variant choisi sont affichees.
+        pilotent le scenario et la composition en robots. Les graphiques 2D
+        comparent chaque metrique sur les seeds, et le panneau 3D projette
+        la performance dans l'espace <strong>g / y / r</strong>.
       </p>
     </section>
 
@@ -761,17 +965,37 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
       <section>
         <div class="version-strip" id="versionStrip"></div>
+
+        <section class="panel plot3d-panel">
+          <h2 class="section-title">3D Plot</h2>
+          <div class="plot3d-controls">
+            <label>
+              Version (3D)
+              <select id="plotVersionSelect"></select>
+            </label>
+            <label>
+              Metrique (3D)
+              <select id="plotMetricSelect"></select>
+            </label>
+          </div>
+          <div class="plot3d" id="plot3d"></div>
+          <p class="hint">
+            Axes: robots verts (X), jaunes (Y), rouges (Z). La couleur du point
+            represente la valeur moyenne de la metrique selectionnee.
+          </p>
+        </section>
+
         <div class="metrics-grid" id="metricsGrid"></div>
         <p class="footer-note">
-          Chaque graphique affiche 3 barres, une par version. La hauteur
+          Chaque graphique 2D affiche 3 barres, une par version. La hauteur
           correspond a la moyenne sur les seeds disponibles et la barre de
-          variation represente l'intervalle min-max. Si une metrique n'est pas
-          definie pour certaines seeds, le compteur l'indique explicitement.
+          variation represente l'intervalle min-max.
         </p>
       </section>
     </div>
   </main>
 
+  <script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
   <script>
     const DASHBOARD_DATA = __DATA__;
 
@@ -785,6 +1009,9 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     const variantMeta = document.getElementById("variantMeta");
     const versionStrip = document.getElementById("versionStrip");
     const metricsGrid = document.getElementById("metricsGrid");
+    const plotVersionSelect = document.getElementById("plotVersionSelect");
+    const plotMetricSelect = document.getElementById("plotMetricSelect");
+    const plot3d = document.getElementById("plot3d");
 
     const variantNames = Object.keys(DASHBOARD_DATA.variants);
     const variants = DASHBOARD_DATA.variants;
@@ -836,6 +1063,10 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       return DASHBOARD_DATA.metric_meta[metric]?.category || metric.split("/")[0];
     }
 
+    function metricLabel(metric) {
+      return DASHBOARD_DATA.metric_meta[metric]?.label || metric;
+    }
+
     function metricDirection(metric) {
       const value = DASHBOARD_DATA.metric_meta[metric]?.lower_is_better;
       if (value === true) return "Plus bas = meilleur";
@@ -874,16 +1105,13 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     }
 
     function expectedSeedCount(variant, version) {
-      const stableMetric =
-        variant.versions[version]?.["efficiency/total_steps"] ||
-        variant.versions[version]?.["completion/duration_sec"] ||
-        [];
-      if (stableMetric.length) {
-        return stableMetric.length;
+      const expected = variant.versions[version]?.expected_runs || 0;
+      if (expected > 0) {
+        return expected;
       }
 
       let maxCount = 0;
-      Object.values(variant.versions[version] || {}).forEach((series) => {
+      Object.values(variant.versions[version]?.metrics || {}).forEach((series) => {
         maxCount = Math.max(maxCount, series.length);
       });
       return maxCount;
@@ -939,10 +1167,32 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       configureRange(greenRange, greenValue, DASHBOARD_DATA.robot_values.green, variants[initialVariant].meta.green);
       configureRange(yellowRange, yellowValue, DASHBOARD_DATA.robot_values.yellow, variants[initialVariant].meta.yellow);
       configureRange(redRange, redValue, DASHBOARD_DATA.robot_values.red, variants[initialVariant].meta.red);
+
+      const preferredVersion = DASHBOARD_DATA.versions.includes("v0.0.3") ? "v0.0.3" : DASHBOARD_DATA.versions[0];
+      fillSelect(
+        plotVersionSelect,
+        DASHBOARD_DATA.versions,
+        preferredVersion,
+        (version) => {
+          const meta = DASHBOARD_DATA.version_meta[version] || { label: version };
+          return meta.label || version;
+        }
+      );
+
+      const preferredMetric = DASHBOARD_DATA.metrics.includes("efficiency/steps")
+        ? "efficiency/steps"
+        : DASHBOARD_DATA.metrics[0];
+      fillSelect(
+        plotMetricSelect,
+        DASHBOARD_DATA.metrics,
+        preferredMetric,
+        (metric) => `${metricLabel(metric)} (${metric})`
+      );
     }
 
     function renderVariantMeta(variantName) {
       const meta = variants[variantName].meta;
+      const generatedAt = DASHBOARD_DATA.generated_at ? `<div class="hint">Genere le : <strong>${DASHBOARD_DATA.generated_at}</strong></div>` : "";
       variantMeta.innerHTML = `
         <h2 class="section-title">Variant selectionne</h2>
         <div><strong>${meta.label}</strong></div>
@@ -952,7 +1202,8 @@ HTML_TEMPLATE = """<!DOCTYPE html>
           <span class="chip">y = ${meta.yellow}</span>
           <span class="chip">r = ${meta.red}</span>
         </div>
-        <div class="hint">Source des logs : <code>${DASHBOARD_DATA.generated_from}</code></div>
+        <div class="hint">Source : <code>${DASHBOARD_DATA.generated_from}</code></div>
+        ${generatedAt}
       `;
     }
 
@@ -1080,7 +1331,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         const seriesByVersion = {};
         let hasData = false;
         versionOrder.forEach((version) => {
-          const series = variant.versions[version]?.[metric] || [];
+          const series = variant.versions[version]?.metrics?.[metric] || [];
           seriesByVersion[version] = series;
           if (series.length) {
             hasData = true;
@@ -1113,10 +1364,143 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         : `<div class="empty-metrics">Aucune metrique ne correspond au filtre courant.</div>`;
     }
 
+    function build3dPoints(scenario, version, metric) {
+      return variantNames
+        .map((name) => ({ name, variant: variants[name] }))
+        .filter(({ variant }) => {
+          const meta = variant.meta;
+          return (
+            meta.scenario === scenario &&
+            Number.isInteger(meta.green) &&
+            Number.isInteger(meta.yellow) &&
+            Number.isInteger(meta.red)
+          );
+        })
+        .map(({ name, variant }) => {
+          const series = variant.versions[version]?.metrics?.[metric] || [];
+          const values = series.map((point) => point.value);
+          const summary = stats(values);
+          return {
+            variantName: name,
+            meta: variant.meta,
+            summary,
+            expected: expectedSeedCount(variant, version),
+          };
+        })
+        .filter((item) => item.summary.count > 0)
+        .sort((a, b) => {
+          if (a.meta.green !== b.meta.green) return a.meta.green - b.meta.green;
+          if (a.meta.yellow !== b.meta.yellow) return a.meta.yellow - b.meta.yellow;
+          return a.meta.red - b.meta.red;
+        });
+    }
+
+    function render3DPlot() {
+      const scenario = scenarioSelect.value;
+      const version = plotVersionSelect.value;
+      const metric = plotMetricSelect.value;
+      const points = build3dPoints(scenario, version, metric);
+
+      if (typeof Plotly === "undefined") {
+        plot3d.innerHTML = `<div class="plot3d-empty">Plotly n'est pas disponible. Recharge la page avec acces internet pour afficher la vue 3D.</div>`;
+        return;
+      }
+
+      if (!points.length) {
+        Plotly.purge(plot3d);
+        plot3d.innerHTML = `<div class="plot3d-empty">Aucune donnee disponible pour ce scenario/version/metrique.</div>`;
+        return;
+      }
+
+      Plotly.purge(plot3d);
+
+      const x = points.map((point) => point.meta.green);
+      const y = points.map((point) => point.meta.yellow);
+      const z = points.map((point) => point.meta.red);
+      const means = points.map((point) => point.summary.mean);
+      const customData = points.map((point) => [
+        point.variantName,
+        formatValue(metric, point.summary.mean),
+        formatValue(metric, point.summary.min),
+        formatValue(metric, point.summary.max),
+        point.summary.count,
+        point.expected,
+      ]);
+
+      const trace = {
+        type: "scatter3d",
+        mode: "markers",
+        x,
+        y,
+        z,
+        customdata: customData,
+        marker: {
+          size: 8,
+          color: means,
+          colorscale: "Turbo",
+          opacity: 0.9,
+          colorbar: {
+            title: { text: metricLabel(metric) },
+          },
+          line: {
+            color: "rgba(15,23,42,0.4)",
+            width: 0.7,
+          },
+        },
+        hovertemplate:
+          "<b>%{customdata[0]}</b><br>" +
+          "g=%{x}, y=%{y}, r=%{z}<br>" +
+          "mean=%{customdata[1]}<br>" +
+          "min=%{customdata[2]}<br>" +
+          "max=%{customdata[3]}<br>" +
+          "seeds=%{customdata[4]}/%{customdata[5]}<extra></extra>",
+      };
+
+      const layout = {
+        margin: { l: 0, r: 0, b: 0, t: 10 },
+        paper_bgcolor: "rgba(0,0,0,0)",
+        scene: {
+          xaxis: {
+            title: "Robots verts",
+            backgroundcolor: "rgba(255,255,255,0.5)",
+            gridcolor: "rgba(148,163,184,0.25)",
+            zerolinecolor: "rgba(148,163,184,0.4)",
+          },
+          yaxis: {
+            title: "Robots jaunes",
+            backgroundcolor: "rgba(255,255,255,0.5)",
+            gridcolor: "rgba(148,163,184,0.25)",
+            zerolinecolor: "rgba(148,163,184,0.4)",
+          },
+          zaxis: {
+            title: "Robots rouges",
+            backgroundcolor: "rgba(255,255,255,0.5)",
+            gridcolor: "rgba(148,163,184,0.25)",
+            zerolinecolor: "rgba(148,163,184,0.4)",
+          },
+          camera: {
+            eye: { x: 1.5, y: 1.3, z: 1.15 },
+          },
+        },
+      };
+
+      Plotly.react(
+        plot3d,
+        [trace],
+        layout,
+        {
+          responsive: true,
+          displaylogo: false,
+          modeBarButtonsToRemove: ["lasso3d", "select2d"],
+        }
+      );
+    }
+
     function updateFromVariant(variantName) {
       syncParamSelectsFromVariant(variantName);
       renderVariantMeta(variantName);
       renderMetrics(variantName);
+      render3DPlot();
     }
 
     function updateFromParams() {
@@ -1128,6 +1512,12 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     }
 
     function init() {
+      if (!variantNames.length) {
+        metricsGrid.innerHTML = `<div class="empty-metrics">Aucun variant n'a ete trouve dans benchmark_report.json.</div>`;
+        plot3d.innerHTML = `<div class="plot3d-empty">Aucune donnee 3D a afficher.</div>`;
+        return;
+      }
+
       const initialVariant = variantNames[0];
       fillControlOptions(initialVariant);
       renderVersionStrip();
@@ -1137,6 +1527,8 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       greenRange.addEventListener("input", updateFromParams);
       yellowRange.addEventListener("input", updateFromParams);
       redRange.addEventListener("input", updateFromParams);
+      plotVersionSelect.addEventListener("change", render3DPlot);
+      plotMetricSelect.addEventListener("change", render3DPlot);
     }
 
     init();
@@ -1146,7 +1538,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 """
 
 
-def write_dashboard(payload: dict, output_path: Path):
+def write_dashboard(payload: dict[str, Any], output_path: Path) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     html = HTML_TEMPLATE.replace(
         "__DATA__",
@@ -1155,34 +1547,34 @@ def write_dashboard(payload: dict, output_path: Path):
     output_path.write_text(html, encoding="utf-8")
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Genere un dashboard HTML a partir des logs TensorBoard."
+        description="Generate benchmark dashboard from benchmark_report.json."
     )
     parser.add_argument(
-        "--logdir",
+        "--report",
         type=Path,
-        default=Path("tb_logs"),
-        help="Dossier racine contenant un sous-dossier par variant.",
+        default=Path("benchmark_outputs/benchmark_report.json"),
+        help="Path to benchmark_report.json generated by benchmark_pipeline.py.",
     )
     parser.add_argument(
         "--output",
         type=Path,
         default=Path("docs/index.html"),
-        help="Fichier HTML de sortie.",
+        help="Path to output HTML file.",
     )
     args = parser.parse_args()
 
-    if not args.logdir.exists():
-        raise FileNotFoundError(f"Dossier de logs introuvable : {args.logdir}")
+    if not args.report.exists():
+        raise FileNotFoundError(f"Report file not found: {args.report}")
 
-    payload = load_dashboard_data(args.logdir)
+    payload = load_dashboard_data(args.report)
     write_dashboard(payload, args.output)
 
-    print(f"Dashboard ecrit dans : {args.output.resolve()}")
-    print(f"Variants : {len(payload['variants'])}")
-    print(f"Metrics : {len(payload['metrics'])}")
-    print(f"Versions : {', '.join(payload['versions'])}")
+    print(f"Dashboard written to: {args.output.resolve()}")
+    print(f"Variants: {len(payload['variants'])}")
+    print(f"Metrics: {len(payload['metrics'])}")
+    print(f"Versions: {', '.join(payload['versions'])}")
 
 
 if __name__ == "__main__":
