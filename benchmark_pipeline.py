@@ -1,11 +1,12 @@
 import argparse
+import concurrent.futures
 import contextlib
 import copy
-import csv
 import io
 import itertools
 import json
 import math
+import os
 import statistics
 import time
 from pathlib import Path
@@ -14,6 +15,7 @@ from typing import Any
 from communication.message.MessageService import MessageService
 from model import RobotMissionModel
 from objects import WasteAgent
+from tqdm import tqdm
 
 AVAILABLE_VERSIONS = ["v0.0.1", "v0.0.2", "v0.0.3"]
 WASTE_COLORS = ["green", "yellow", "red"]
@@ -243,6 +245,74 @@ def run_single(params: dict[str, Any], version: str, max_steps: int) -> dict[str
     }
 
 
+def _run_single_task(task: dict[str, Any]) -> dict[str, Any]:
+    row = run_single(task["params"], task["version"], task["max_steps"])
+    row["variant"] = task["variant"]
+    row["run_index"] = task["run_index"]
+    row["seed"] = task["seed"]
+    return row
+
+
+def _run_variant_tasks(
+    variant_name: str,
+    merged_params: dict[str, Any],
+    versions: list[str],
+    seeds: list[int],
+    max_steps: int,
+    max_workers: int,
+    show_progress: bool,
+) -> list[dict[str, Any]]:
+    tasks: list[dict[str, Any]] = []
+    for run_index, run_seed in enumerate(seeds):
+        run_params = copy.deepcopy(merged_params)
+        run_params["seed"] = run_seed
+        for version in versions:
+            tasks.append(
+                {
+                    "variant": variant_name,
+                    "run_index": run_index,
+                    "seed": run_seed,
+                    "version": version,
+                    "params": run_params,
+                    "max_steps": max_steps,
+                }
+            )
+
+    if not tasks:
+        return []
+
+    if max_workers <= 1:
+        rows: list[dict[str, Any]] = []
+        iterator = tqdm(
+            tasks,
+            total=len(tasks),
+            desc=f"{variant_name}",
+            leave=False,
+            disable=not show_progress,
+        )
+        for task in iterator:
+            rows.append(_run_single_task(task))
+        return rows
+
+    rows = []
+    workers = min(max_workers, len(tasks))
+    with concurrent.futures.ProcessPoolExecutor(max_workers=workers) as executor:
+        futures = [executor.submit(_run_single_task, task) for task in tasks]
+        progress = tqdm(
+            concurrent.futures.as_completed(futures),
+            total=len(futures),
+            desc=f"{variant_name}",
+            leave=False,
+            disable=not show_progress,
+        )
+        for future in progress:
+            rows.append(future.result())
+
+    version_order = {version: idx for idx, version in enumerate(versions)}
+    rows.sort(key=lambda row: (row["run_index"], version_order.get(row["version"], 9999)))
+    return rows
+
+
 def _compact_run_row(row: dict[str, Any]) -> dict[str, Any]:
     clear_steps = row["color_clear_steps"]
     cm = row.get("comm_metrics", {})
@@ -274,6 +344,7 @@ def _compact_run_row(row: dict[str, Any]) -> dict[str, Any]:
         "pickups_total": cm.get("pickups_total"),
         "deposits_total": cm.get("deposits_total"),
         "waste_cleared_per_step": cm.get("waste_cleared_per_step"),
+        "idle_steps_total": cm.get("idle_steps_total"),
         "idle_ratio": cm.get("idle_ratio"),
         # Communication locale
         "local_syncs_total": cm.get("local_syncs_total"),
@@ -310,12 +381,18 @@ def _analysis_for_variant(variant_summary: list[dict[str, Any]]) -> dict[str, An
     }
 
 
-def run_benchmark(config: dict[str, Any]) -> dict[str, Any]:
+def run_benchmark(
+    config: dict[str, Any],
+    max_workers: int | None = None,
+    show_progress: bool = True,
+) -> dict[str, Any]:
     base_params = config["base_params"]
     versions = config.get("versions", AVAILABLE_VERSIONS)
     variants = _build_variants(config)
     seeds = _build_seed_list(config, base_params)
     max_steps = int(config.get("max_steps", 500))
+    effective_workers = max_workers if max_workers is not None else (os.cpu_count() or 1)
+    effective_workers = max(1, int(effective_workers))
 
     all_rows: list[dict[str, Any]] = []
     summary_rows: list[dict[str, Any]] = []
@@ -349,18 +426,18 @@ def run_benchmark(config: dict[str, Any]) -> dict[str, Any]:
             continue
 
         variant_version_rows: dict[str, list[dict[str, Any]]] = {v: [] for v in versions}
-
-        for run_index, run_seed in enumerate(seeds):
-            run_params = copy.deepcopy(merged_params)
-            run_params["seed"] = run_seed
-
-            for version in versions:
-                row = run_single(run_params, version, max_steps)
-                row["variant"] = variant_name
-                row["run_index"] = run_index
-                row["seed"] = run_seed
-                all_rows.append(row)
-                variant_version_rows[version].append(row)
+        variant_rows = _run_variant_tasks(
+            variant_name=variant_name,
+            merged_params=merged_params,
+            versions=versions,
+            seeds=seeds,
+            max_steps=max_steps,
+            max_workers=effective_workers,
+            show_progress=show_progress,
+        )
+        for row in variant_rows:
+            all_rows.append(row)
+            variant_version_rows[row["version"]].append(row)
 
         baseline_version = versions[0]
         baseline_steps = [
@@ -449,6 +526,7 @@ def run_benchmark(config: dict[str, Any]) -> dict[str, Any]:
                 "avg_pickups_total": _avg_cm("pickups_total"),
                 "avg_deposits_total": _avg_cm("deposits_total"),
                 "avg_waste_cleared_per_step": _avg_cm("waste_cleared_per_step"),
+                "avg_idle_steps_total": _avg_cm("idle_steps_total"),
                 "avg_idle_ratio": _avg_cm("idle_ratio"),
                 # Communication locale
                 "avg_local_syncs_total": _avg_cm("local_syncs_total"),
@@ -476,6 +554,7 @@ def run_benchmark(config: dict[str, Any]) -> dict[str, Any]:
             "versions": versions,
             "seeds": seeds,
             "max_steps": max_steps,
+            "max_workers": effective_workers,
             "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         },
         "results": all_rows,
@@ -483,17 +562,6 @@ def run_benchmark(config: dict[str, Any]) -> dict[str, Any]:
         "summary": summary_rows,
         "analysis": variant_analysis,
     }
-
-
-def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
-    if not rows:
-        path.write_text("", encoding="utf-8")
-        return
-    fieldnames = sorted({key for row in rows for key in row.keys()})
-    with path.open("w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerows(rows)
 
 
 def main() -> None:
@@ -512,23 +580,30 @@ def main() -> None:
         default=Path("benchmark_outputs"),
         help="Directory where output files are written.",
     )
+    parser.add_argument(
+        "--max-workers",
+        type=int,
+        default=os.cpu_count() or 1,
+        help="Number of worker processes used to run simulations asynchronously.",
+    )
+    parser.add_argument(
+        "--no-progress",
+        action="store_true",
+        help="Disable tqdm progress bars.",
+    )
     args = parser.parse_args()
 
     config = json.loads(args.config.read_text(encoding="utf-8"))
-    report = run_benchmark(config)
+    report = run_benchmark(
+        config,
+        max_workers=args.max_workers,
+        show_progress=not args.no_progress,
+    )
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     json_path = args.output_dir / "benchmark_report.json"
-    csv_path = args.output_dir / "benchmark_runs.csv"
-    summary_csv_path = args.output_dir / "benchmark_summary.csv"
-
     json_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
-    _write_csv(csv_path, report["results_compact"])
-    _write_csv(summary_csv_path, report["summary"])
-
     print(f"Benchmark done. JSON: {json_path}")
-    print(f"Runs CSV: {csv_path}")
-    print(f"Summary CSV: {summary_csv_path}")
 
 
 if __name__ == "__main__":

@@ -13,7 +13,7 @@
   },
   "versions": ["v0.0.1", "v0.0.2", "v0.0.3"],
   "seeds": [11, 12, 13, 14, 15],
-  "max_steps": 700,
+  "max_steps": 5000,
   "variants": [
     {
       "name": "baseline",

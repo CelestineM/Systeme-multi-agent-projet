@@ -9,7 +9,7 @@ Le projet genere donc une page HTML autonome a partir des logs TensorBoard :
 
 ```bash
 pip install -r requirements.txt
-python3 generate_benchmark_dashboard.py --logdir tb_logs --output docs/index.html
+python3 generate_benchmark_dashboard.py --report benchmark_outputs/benchmark_report.json --output docs/index.html
 ```
 
 Ouvre ensuite `docs/index.html` localement, ou publie `docs/` avec GitHub Pages.
