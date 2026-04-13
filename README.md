@@ -1,6 +1,6 @@
 # Systeme multi-agent - Robot Mission MAS 2026
 
-Ce depot contient la simulation, le pipeline de benchmark et l'analyse des versions `v0.0.1`, `v0.0.2` et `v0.0.3`.
+Ce depot contient la simulation, le pipeline de benchmark et l'analyse des versions `v0.0.1`, `v0.0.2`, `v0.0.3` et `v0.0.4`.
 
 ## Dashboard interactif
 

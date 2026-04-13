@@ -80,5 +80,7 @@ def build_behavior(version: str):
     if version == "v0.0.2":
         return DecisionPolicy(NaiveNavigator(), LocalKnowledgeSharing())
     if version == "v0.0.3":
+        return DecisionPolicy(AStarFrontierNavigator(), LocalKnowledgeSharing())
+    if version == "v0.0.4":
         return DecisionPolicy(AStarFrontierNavigator(), SmartColorKnowledgeSharing())
-    raise ValueError(f"Version inconnue : {version}. Disponibles : ['v0.0.1', 'v0.0.2', 'v0.0.3']")
+    raise ValueError(f"Version inconnue : {version}. Disponibles : ['v0.0.1', 'v0.0.2', 'v0.0.3', 'v0.0.4']")

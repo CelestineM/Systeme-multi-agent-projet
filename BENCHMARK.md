@@ -1,6 +1,6 @@
 # Benchmark pipeline
 
-This benchmark pipeline compares policy versions (`v0.0.1`, `v0.0.2`, `v0.0.3`) on identical map conditions and controlled seeds.
+This benchmark pipeline compares policy versions (`v0.0.1`, `v0.0.2`, `v0.0.3`, `v0.0.4`) on identical map conditions and controlled seeds.
 
 ## What you get per run
 

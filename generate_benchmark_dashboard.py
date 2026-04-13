@@ -23,7 +23,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any, TextIO
 
-VERSION_ORDER = ["v0.0.1", "v0.0.2", "v0.0.3"]
+VERSION_ORDER = ["v0.0.1", "v0.0.2", "v0.0.3", "v0.0.4"]
 VERSION_META = {
     "v0.0.1": {
         "label": "v0.0.1",
@@ -37,9 +37,14 @@ VERSION_META = {
     },
     "v0.0.3": {
         "label": "v0.0.3",
-        "subtitle": "A* + SmartColorKnowledgeSharing",
+        "subtitle": "A* + LocalKnowledgeSharing",
         "color": "#dc2626",
     },
+    "v0.0.4": {
+        "label": "v0.0.4",
+        "subtitle": "A* + AdvancedKnowledgeSharing",
+        "color": "#7c3aed",
+    }
 }
 
 # (field_in_results_compact, normalized_metric_tag)
@@ -429,7 +434,10 @@ def load_dashboard_data(report_path: Path) -> dict[str, Any]:
         grouped[str(variant)][str(version)].append(row)
 
     versions_seen = {version for per_variant in grouped.values() for version in per_variant.keys()}
-    ordered_versions = sorted(set(versions_from_meta) | versions_seen, key=_version_sort_key)
+    ordered_versions = sorted(
+      set(VERSION_ORDER) | set(versions_from_meta) | versions_seen,
+      key=_version_sort_key,
+    )
 
     variants: dict[str, Any] = {}
     scenarios: set[str] = set()
@@ -700,7 +708,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
     .version-strip {
       display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
       gap: 12px;
       margin-bottom: 18px;
     }
@@ -921,8 +929,8 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     <section class="hero">
       <h1>Dashboard interactif des benchmarks</h1>
       <p>
-        Cette page compare automatiquement <strong>v0.0.1</strong>, <strong>v0.0.2</strong>
-        et <strong>v0.0.3</strong> pour un variant donne. Les selecteurs de gauche
+        Cette page compare automatiquement <strong>v0.0.1</strong>, <strong>v0.0.2</strong>,  <strong>v0.0.3</strong>
+        et <strong>v0.0.4</strong> pour un variant donne. Les selecteurs de gauche
         pilotent le scenario et la composition en robots. Les graphiques 2D
         comparent chaque metrique sur les seeds, et le panneau 3D projette
         la performance dans l'espace <strong>g / y / r</strong>.
@@ -1168,7 +1176,9 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       configureRange(yellowRange, yellowValue, DASHBOARD_DATA.robot_values.yellow, variants[initialVariant].meta.yellow);
       configureRange(redRange, redValue, DASHBOARD_DATA.robot_values.red, variants[initialVariant].meta.red);
 
-      const preferredVersion = DASHBOARD_DATA.versions.includes("v0.0.3") ? "v0.0.3" : DASHBOARD_DATA.versions[0];
+      const preferredVersion = DASHBOARD_DATA.versions.includes("v0.0.4")
+        ? "v0.0.4"
+        : (DASHBOARD_DATA.versions.includes("v0.0.3") ? "v0.0.3" : DASHBOARD_DATA.versions[0]);
       fillSelect(
         plotVersionSelect,
         DASHBOARD_DATA.versions,
