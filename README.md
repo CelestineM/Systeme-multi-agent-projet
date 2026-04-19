@@ -17,7 +17,7 @@ Ouvre ensuite `docs/index.html` localement, ou publie `docs/` avec GitHub Pages.
 Cette interface permet de :
 
 - choisir le scenario et les parametres `g / y / r`,
-- comparer automatiquement les trois versions sur le variant correspondant,
+- comparer automatiquement les quatre versions sur le variant correspondant,
 - afficher toutes les metriques disponibles pour le variant choisi.
 
 ## Analyse detaillee

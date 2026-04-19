@@ -929,11 +929,11 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     <section class="hero">
       <h1>Dashboard interactif des benchmarks</h1>
       <p>
-        Cette page compare automatiquement <strong>v0.0.1</strong>, <strong>v0.0.2</strong>,  <strong>v0.0.3</strong>
-        et <strong>v0.0.4</strong> pour un variant donne. Les selecteurs de gauche
-        pilotent le scenario et la composition en robots. Les graphiques 2D
-        comparent chaque metrique sur les seeds, et le panneau 3D projette
-        la performance dans l'espace <strong>g / y / r</strong>.
+        Cette page compare automatiquement toutes les versions disponibles
+        pour un variant donne. Les selecteurs de gauche pilotent le scenario
+        et la composition en robots. Les graphiques 2D comparent chaque
+        metrique sur les seeds, et le panneau 3D projette la performance dans
+        l'espace <strong>g / y / r</strong>.
       </p>
     </section>
 
@@ -995,7 +995,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
         <div class="metrics-grid" id="metricsGrid"></div>
         <p class="footer-note">
-          Chaque graphique 2D affiche 3 barres, une par version. La hauteur
+          Chaque graphique 2D affiche une barre par version. La hauteur
           correspond a la moyenne sur les seeds disponibles et la barre de
           variation represente l'intervalle min-max.
         </p>
