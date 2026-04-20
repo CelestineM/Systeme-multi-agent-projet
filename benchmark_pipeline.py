@@ -448,7 +448,10 @@ def _merge_reports(existing: dict[str, Any], new_report: dict[str, Any]) -> dict
             for v in (existing_meta.get("versions", []) + new_meta.get("versions", []))
             if isinstance(v, str)
         },
-        key=lambda v: AVAILABLE_VERSIONS.index(v) if v in AVAILABLE_VERSIONS else len(AVAILABLE_VERSIONS),
+        key=lambda v: (
+            AVAILABLE_VERSIONS.index(v) if v in AVAILABLE_VERSIONS else len(AVAILABLE_VERSIONS),
+            v,
+        ),
     )
     seeds = sorted(
         {
@@ -471,6 +474,29 @@ def _merge_reports(existing: dict[str, Any], new_report: dict[str, Any]) -> dict
         "summary": merged_summary,
         "analysis": _rebuild_analysis_from_summary(merged_summary),
     }
+
+
+def _sorted_report_paths(paths: list[Path]) -> list[Path]:
+    return sorted(paths, key=lambda p: (p.stat().st_mtime, p.name))
+
+
+def _merge_report_files(paths: list[Path]) -> dict[str, Any]:
+    if not paths:
+        raise ValueError("No report files to merge.")
+
+    ordered_paths = _sorted_report_paths(paths)
+    merged: dict[str, Any] | None = None
+
+    for path in ordered_paths:
+        current = json.loads(path.read_text(encoding="utf-8"))
+        if merged is None:
+            merged = current
+        else:
+            merged = _merge_reports(merged, current)
+
+    if merged is None:
+        raise ValueError("Could not merge report files.")
+    return merged
 
 
 def run_benchmark(
@@ -700,6 +726,17 @@ def main() -> None:
         action="store_true",
         help="Append/merge into existing benchmark_report.json instead of overwriting it.",
     )
+    parser.add_argument(
+        "--merge-pattern",
+        type=str,
+        default="benchmark_report*.json",
+        help="Glob pattern used to collect report files to merge in output dir.",
+    )
+    parser.add_argument(
+        "--merge-only",
+        action="store_true",
+        help="Only merge existing report files matching --merge-pattern, then exit.",
+    )
     args = parser.parse_args()
 
     config = json.loads(args.config.read_text(encoding="utf-8"))
@@ -721,18 +758,34 @@ def main() -> None:
             )
         config["versions"] = selected_versions
 
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+    json_path = args.output_dir / "benchmark_report.json"
+
+    report_paths = [
+        path
+        for path in args.output_dir.glob(args.merge_pattern)
+        if path.is_file() and path.suffix == ".json"
+    ]
+
+    if args.merge_only:
+        if not report_paths:
+            raise FileNotFoundError(
+                f"No report files match pattern '{args.merge_pattern}' in {args.output_dir}"
+            )
+        merged_report = _merge_report_files(report_paths)
+        json_path.write_text(json.dumps(merged_report, indent=2), encoding="utf-8")
+        print(f"Merged {len(report_paths)} report file(s) into: {json_path}")
+        return
+
     report = run_benchmark(
         config,
         max_workers=args.max_workers,
         show_progress=not args.no_progress,
     )
 
-    args.output_dir.mkdir(parents=True, exist_ok=True)
-    json_path = args.output_dir / "benchmark_report.json"
-
-    if args.append_existing and json_path.exists():
-        existing = json.loads(json_path.read_text(encoding="utf-8"))
-        report = _merge_reports(existing, report)
+    if args.append_existing and report_paths:
+        existing_merged = _merge_report_files(report_paths)
+        report = _merge_reports(existing_merged, report)
 
     json_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
     print(f"Benchmark done. JSON: {json_path}")
