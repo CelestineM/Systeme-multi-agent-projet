@@ -18,17 +18,11 @@
     {
       "name": "baseline",
       "updates": {}
-    },
-    {
-      "name": "heavy_wastes",
-      "updates": {
-        "num_wastes": {"green": 18, "yellow": 12, "red": 6}
-      }
     }
   ],
   "robot_range_sweep": {
-    "green": [1, 4],
-    "yellow": [1, 4],
-    "red": [0, 4]
+    "green": [2, 4],
+    "yellow": [2, 4],
+    "red": [2, 4]
   }
 }

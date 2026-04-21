@@ -28,7 +28,7 @@ Each variant is validated before simulation. Invalid variants are skipped with e
 
 ## Seed control
 
-You can fully control randomness with explicit `seeds` in config. If absent, the script uses `seed + repeats`.
+You can fully control randomness with explicit `seeds` in config. If absent, the script uses the single value from `base_params.seed`.
 
 ## Robot brute-force sweep
 
@@ -51,6 +51,26 @@ This creates variants like `robots_g1_y1_r0`, `robots_g4_y4_r4`, etc.
 ```bash
 python benchmark_pipeline.py --config benchmark_config.example.json --output-dir benchmark_outputs
 ```
+
+Run a single version (for example `v0.0.4`) and merge with existing results instead of overwriting:
+
+```bash
+python benchmark_pipeline.py --config benchmark_config.example.json --output-dir benchmark_outputs --version v0.0.4 --append-existing
+```
+
+Run an explicit list of versions:
+
+```bash
+python benchmark_pipeline.py --config benchmark_config.example.json --output-dir benchmark_outputs --versions v0.0.3,v0.0.4 --append-existing
+```
+
+Merge-only mode for split reports:
+
+```bash
+python benchmark_pipeline.py --output-dir benchmark_outputs --merge-only --merge-pattern "benchmark_report*.json"
+```
+
+`--append-existing` now merges all files matching `--merge-pattern` in the output directory (default: `benchmark_report*.json`) before inserting newly computed runs.
 
 ## Outputs
 

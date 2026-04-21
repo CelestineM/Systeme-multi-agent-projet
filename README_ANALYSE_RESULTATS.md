@@ -2,17 +2,6 @@
 **Groupe 3** · Malo Chauvel, Constance Piquet, Célestine Martin  
 ---
 
-> Interface interactive : le README GitHub ne peut pas embarquer de vrais selecteurs JS.  
-> Le depot fournit donc un dashboard HTML autonome genere depuis les logs TensorBoard :
->
-> ```bash
-> pip install -r requirements.txt
-> python3 generate_benchmark_dashboard.py --report benchmark_outputs/benchmark_report.json --output docs/index.html
-> ```
->
-> Ouvre ensuite `docs/index.html` localement, ou publie `docs/` avec GitHub Pages.
-> L'interface permet de choisir `scenario`, `g`, `y`, `r`, puis affiche toutes les metriques
-> du variant selectionne en comparant `v0.0.1`, `v0.0.2` et `v0.0.3`.
 
 ## Sommaire
 
@@ -35,11 +24,11 @@
 
 | Paramètre | Valeur |
 |---|---|
-| Versions comparées | `v0.0.1`, `v0.0.2`, `v0.0.3` |
-| Variants (compositions robots) | 128 (sweep g1–g4 × y1–y4 × r1–r4) |
-| Seeds par variant × version | 5 |
-| Max steps par run | 700 |
-| **Total runs** | **1 920** |
+| Versions comparées | `v0.0.1`, `v0.0.2`, `v0.0.3`, `v0.0.4` |
+| Variants (compositions robots) | 128 (sweep g2–g4 × y2–y4 × r2–r4) |
+| Seeds par variant × version | 10 |
+| Max steps par run | 1500 |
+| **Total runs** | **2 560** *(v0.0.1: 640, v0.0.2: 640, v0.0.3: 640, v0.0.4: 640)* |
 | Map | 15×15, 2 épicentres, rayon_zone_3=2.5, rayon_zone_2=5.5 |
 | Déchets initiaux | 8 verts, 4 jaunes, 2 rouges |
 
@@ -53,7 +42,8 @@ Toutes les métriques sont dans l'onglet **SCALARS**, organisées en sous-groupe
 |---|---|---|
 |  **Orange** | `v0.0.1` | Naive + NoKnowledgeSharing (aucune communication) |
 |  **Bleu** | `v0.0.2` | Naive + LocalKnowledgeSharing |
-| **Rouge** | `v0.0.3` | A* + SmartColorKnowledgeSharing |
+| **Rouge** | `v0.0.3` | A* + LocalKnowledgeSharing |
+| **Violet** | `v0.0.4` | A* + SmartColorKnowledgeSharing |
 
 > Sur les métriques de communication (`msg_sent_total`, `local_syncs_total`), v0.0.1 apparaît comme une ligne plate à 0 — il est présent mais invisible car il n'envoie aucun message et ne fait aucune sync.
 
@@ -61,186 +51,71 @@ Toutes les métriques sont dans l'onglet **SCALARS**, organisées en sous-groupe
 
 ## Résultats globaux par version
 
-| Métrique | v0.0.1 | v0.0.2 | v0.0.3 | Gain v0.0.1→v0.0.3 |
+
+| Métrique (moyenne par run) | v0.0.1 | v0.0.2 | v0.0.3 | v0.0.4 |
 |---|---|---|---|---|
-| **Taux de complétion** | ~0% | 22.5% | **49.4%** | — |
-| **Nb steps moyen** | ~678 | 631 | **509** | −25% |
-| **Mouvements totaux** | ~4 939 | 4 501 | **3 468** | −30% |
-| **Déchets/step** | ~0.080 | 0.101 | **0.156** | +95% |
-| **Attente moy. entre dépôts** | ~11.9 steps | 8.4 steps | **5.9 steps** | −50% |
-| **1er dépôt** | ~step 3.1 | step 3.2 | **step 2.9** | −6% |
-| **Messages envoyés** | 0 | 0 | **~339** | — |
-| **Syncs locaux** | 0 | ~4 615 | ~3 596 | — |
-| **Durée CPU (moy.)** | 4.0 s | 8.8 s | 32.7 s | +725% |
+| **Taux de complétion moyen** | 53.6% | 27.2% | 57.2% | **52.3%** |
+| **Nb steps moyen (missions réussies)** | 1 465 | 526 | 405 | **425** |
+| **Mouvements totaux** | 42 144 | 73 771 | 63 093 | **36 608** |
+| **Déchets traités par step** | 0.045 | 0.067 | 0.063 | **0.165** |
+| **Attente moy. entre dépôts (steps)** | 26.8 | 8.4 | 30.4 | **4.7** |
+| **Messages envoyés** | 0 | 0 | 0 | **15 277** |
+| **Syncs locaux** | 0 | 73 853 | 63 176 | **36 695** |
 
-> **v0.0.3 domine sur toutes les métriques d'efficacité** au prix d'un temps de calcul ×8. Remarque importante : v0.0.1 a un taux de complétion proche de 0% sur cette configuration de carte — ses robots errent sans jamais coordonner la chaîne rouge→jaune→vert.
-
----
-
-## Analyse par catégorie de métriques
-
-### Complétion & Efficacité
-
-![Scalars — Completion](images_readme_analyse_resultats/img_scalars_completion.png)
-*`completion/success_rate` — **rouge = v0.0.3**, **bleu = v0.0.2**, **orange = v0.0.1** (ligne plate à ~0). v0.0.3 monte jusqu'à ~0.65–0.87 sur les meilleurs variants. v0.0.2 plafonne autour de 0.25–0.40 avec une forte variance.*
-
-![Scalars — Efficiency page 1](images_readme_analyse_resultats/img_scalars_efficiency1.png)
-*`efficiency/steps` — **rouge = v0.0.3**, **bleu = v0.0.2**, **orange = v0.0.1**. v0.0.3 descend nettement sous les 500 steps sur les variants avec r≥3, tandis que v0.0.2 reste concentré entre 600 et 700. Les deux courbes se rejoignent sur les variants avec peu de robots (r=1), où ni l'une ni l'autre ne complète.*
-
-![Scalars — Efficiency page 2](images_readme_analyse_resultats/img_scalars_efficiency2.png)
-*`efficiency/waste_cleared_per_step` — **rouge = v0.0.3**, **bleu = v0.0.2**, **orange = v0.0.1**. v0.0.3 double le ratio de déchets traités par step (~0.16–0.20 vs ~0.10–0.13) sur les variants favorables. La tendance croissante des deux courbes traduit l'effet de l'augmentation du nombre de robots dans le sweep.*
-
-**Points clés :**
-
-- Le `first_deposit_step` est quasi identique entre toutes les versions (~2.9–3.2 steps) : **la découverte initiale des déchets n'est pas différenciante**. Tous les robots trouvent rapidement un déchet vert à portée. C'est la phase de collecte *continue et coordonnée* qui diverge.
-- Le `avg_wait_between_deposits` est divisé par 2 en v0.0.3 (11.9 → 5.9 steps) : la communication permet aux robots de ne pas rester en exploration aveugle entre deux dépôts — ils savent où aller.
-- `green_clear_step` et `yellow_clear_step` montrent une **forte variance inter-variants** car ils dépendent directement de la composition en robots, bien plus que de la version. Avec r=1, `red_clear_step` n'est jamais atteint.
-- Le `deposit_event_count` croît régulièrement avec le nombre de robots dans le sweep (visible sur les previews SCALARS page 1 et 2), confirmant que les dépôts s'accumulent bien proportionnellement à la flotte.
-
----
-
-### Mouvements
-
-![Scalars — Movement page 1](images_readme_analyse_resultats/img_scalars_movement1.png)
-*`movement/moves_total` — **rouge = v0.0.3**, **bleu = v0.0.2**, **orange = v0.0.1**. Les deux courbes se croisent fréquemment : v0.0.3 n'est pas systématiquement en dessous. C'est sur les variants à fort nombre de robots (fin du sweep) que v0.0.3 affiche une réduction nette (~3 000 vs ~5 000). Sur les petits variants, les mouvements sont comparables.*
-
-![Scalars — Movement page 2](images_readme_analyse_resultats/img_scalars_movement2.png)
-*`movement/moves_avg_per_agent` — **rouge = v0.0.3**, **bleu = v0.0.2**, **orange = v0.0.1**. Les deux versions maintiennent un nombre de moves par agent élevé (~500–700), avec v0.0.3 qui chute plus tôt sur les bons variants (mission terminée plus vite = moins de steps total = moins de moves). Les chutes synchronisées correspondent aux variants où r≥3, la mission se termine bien avant max_steps.*
-
-**Points clés :**
-
-- **`idle_ratio = 0` pour toutes les versions** : aucun robot ne reste "inactif" au sens comptable. Chaque step, les agents font soit un move, soit un pickup, soit un deposit. Les robots de v0.0.1 *errent* continuellement faute de savoir où aller — ils bougent, mais inutilement.
-- **`moves_avg_per_agent_per_step ≈ 0.97`** : les robots se déplacent à quasi chaque step, quelle que soit la version. C'est cohérent avec la politique de décision : en l'absence de target connu, `exploration_move` retourne toujours un déplacement aléatoire.
-- **La réduction des mouvements totaux en v0.0.3 (−30%) vient des missions plus courtes**, pas d'une meilleure efficacité de déplacement individuelle. Un agent v0.0.3 ne fait pas moins de moves par step, il fait simplement *moins de steps* car la mission se termine plus vite.
-- **`moves_max` vs `moves_min`** (visible dans les previews ranking) révèle une **hétérogénéité entre robots** : certains agents font ~650 moves et d'autres ~350 sur le même run. Cela indique une spécialisation implicite — les robots en zone 3 (rouges) ont moins de déchets à traiter et terminent leur portion de tâche plus tôt.
-- **`pickups_total`** croît de façon quasi-linéaire et similaire entre v0.0.2 et v0.0.3 (visible dans les previews ranking) : les deux versions ramassent autant de déchets en valeur absolue, mais v0.0.3 le fait en moins de temps.
-
----
-
-### Communication
-
-![Scalars — Communication page 1](images_readme_analyse_resultats/img_scalars_comm1.png)
-*`communication/local_syncs_total` — **bleu = v0.0.2**, **rouge = v0.0.3**, **orange = v0.0.1** (ligne plate à 0, non visible). v0.0.2 présente des syncs locaux plus élevés (~4 000–5 000) que v0.0.3 (~3 000–4 000). Paradoxe apparent : v0.0.3 synce moins localement parce qu'il envoie des messages à distance qui rendent les syncs de proximité redondants.*
-
-![Scalars — Communication page 2](images_readme_analyse_resultats/img_scalars_comm2.png)
-*`communication/msg_sent_total` — **rouge = v0.0.3 uniquement** (v0.0.1 et v0.0.2 = 0, non affichés). La courbe monte progressivement avec le nombre de robots dans le sweep (~100 à ~650 messages par run), avec une bosse caractéristique vers le variant 60 correspondant aux compositions à fort y (robots jaunes) qui génèrent plus d'événements de dépôt intermédiaires.*
-
-**Points clés :**
-
-- **v0.0.1** : aucune communication. Les robots sont purement réactifs à leurs percepts locaux. Chaque agent ignore l'existence des autres et redécouvre les mêmes zones en boucle.
-- **v0.0.2** : syncs locaux uniquement (`merge_shared_map` au contact). L'information se propage par *contagion spatiale* : un robot doit physiquement croiser un autre robot pour lui transmettre sa carte. Efficace dans les zones denses, inefficace si les robots évoluent dans des zones séparées (rouge vs vert).
-- **v0.0.3** : syncs locaux **+** messages à distance (`INFORM_REF` via mailbox). Quand un robot ramasse ou dépose un déchet, il prévient immédiatement les robots de la couleur concernée — sans avoir besoin de les croiser. C'est cette communication *événementielle et filtrée par couleur* qui explique la réduction de l'attente entre dépôts.
-- **Le `comm_out_overhead_ratio` de v0.0.3 reste ~0.03–0.05** (visible dans les previews communication) : le nombre de messages représente seulement 3 à 5% du nombre d'actions utiles (pickups + deposits). Le système de messagerie est loin d'être saturé — une v0.0.4 pourrait explorer une communication plus dense (broadcast de position, signaux d'exploration) sans risquer la congestion.
-- **Paradoxe des syncs locaux** : v0.0.2 fait *plus* de syncs locaux que v0.0.3, pourtant v0.0.3 performe mieux. Cela confirme que la **qualité de l'information** (savoir exactement où est un déchet jaune grâce à un message direct) prime sur la **quantité de synchronisation** (partager des cartes complètes mais en retard).
+> * **Le triomphe de la v0.0.4 (SmartColorKnowledgeSharing) :** C'est la version la plus aboutie. Grâce à ses ~15 000 messages événementiels, elle divise l'attente entre les dépôts par 6 par rapport à la v0.0.3 (4.7 steps d'attente contre 30.4), maximise le traitement des déchets (0.165 par step), et **réduit drastiquement le nombre de mouvements totaux** (36 608, soit près de la moitié des versions précédentes).
+> * **Les limites de la v0.0.3 (A* sans messages) :** Bien qu'elle complète de nombreuses missions, le manque de communication à distance se fait sentir : l'attente moyenne entre les dépôts explose à 30.4 steps (pire que la v0.0.1). L'algorithme A* rend les robots efficaces pour se déplacer, mais ils manquent cruellement d'informations sur la localisation des cibles.
+> * **La v0.0.1 gagne par la force brute :** Avec une limite de steps augmentée, la version purement réactive finit par réussir 53.6% de ses missions, mais de manière atrocement inefficace (1 465 steps en moyenne).
 
 ---
 
 ## Impact de la composition en robots
 
-### Par nombre de robots rouges (v0.0.3)
+> Les statistiques ci-dessous sont basées sur la version la plus aboutie (**`v0.0.4`**, messagerie ciblée).
+
+### Par nombre de robots rouges (v0.0.4)
 
 | Robots rouges | Taux de complétion moyen |
 |---|---|
-| r = 1 | ~0–5% |
-| r = 2 | ~43.8% |
-| r = 3 | ~66.9% |
-| r = 4 | **~81.3%** |
+| r = 2 | ~57.8% |
+| r = 3 | ~75.6% |
+| r = 4 | **~87.8%** |
 
-> Le robot rouge est le **goulot d'étranglement** de la chaîne : il est seul à traiter les déchets rouges et à déclencher la cascade rouge→jaune→vert. Doubler r=1→r=2 multiplie le taux de complétion par ~8. Au-delà, les gains sont réels mais décroissants (+23 pp puis +14 pp).
+> **Le robot rouge reste le goulot d'étranglement absolu :** Il est le seul à pouvoir initier la chaîne de traitement (rouge→jaune→vert) dans la zone la plus éloignée. Chaque ajout d'un robot rouge apporte un gain massif et linéaire (+17.8 points puis +12.2 points). Pour maximiser les chances de réussite, il faut maximiser `r`.
 
-### Par nombre de robots verts (v0.0.3)
+### Par nombre de robots verts (v0.0.4)
 
 | Robots verts | Taux de complétion moyen |
 |---|---|
-| g = 1 | ~25.6% |
-| g = 2 | ~53.8% |
-| g = 3 | ~57.5% |
-| g = 4 | **~60.6%** |
+| g = 2 | **~77.8%** |
+| g = 3 | ~73.3% |
+| g = 4 | ~70.0% |
 
-> L'impact des robots verts est réel mais **fortement décroissant** : g=1→g=2 est le saut critique (+28 pp), mais g=3→g=4 n'apporte que +3 pp. La zone 1 n'est pas le bottleneck : une fois que les déchets verts sont générés par les robots jaunes, deux robots verts suffisent à les traiter aussi vite qu'ils arrivent.
+> **L'excès de robots verts est pénalisant :** Contrairement aux robots rouges, ajouter des robots verts au-delà de 2 fait *baisser* les performances globales. Une fois que la capacité de 2 robots verts est atteinte, la zone 1 est absorbée assez vite. Les robots supplémentaires créent de l'encombrement spatial (blocages A*) et du bruit inutile dans le réseau de communication, nuisant à l'efficacité globale.
 
-### Par nombre de robots jaunes (v0.0.3)
+### Par nombre de robots jaunes (v0.0.4)
 
-> Les robots jaunes ont un rôle **intermédiaire et moins critique** : ils traitent les déchets jaunes produits par les robots rouges. Avec r≥2, les déchets jaunes s'accumulent moins vite que la capacité des robots jaunes à les traiter. Ajouter des robots jaunes au-delà de y=2 n'améliore quasiment pas le taux de complétion, mais réduit légèrement `yellow_clear_step`.
+| Robots jaunes | Taux de complétion moyen |
+|---|---|
+| y = 2 | **~80.0%** |
+| y = 3 | ~70.0% |
+| y = 4 | ~71.1% |
 
----
-
-## Analyse du ranking multi-métriques
-
-Le ranking TensorBoard est le seul sous-groupe affichant les **3 versions 
-simultanément** sur le même axe X (variants classés du moins bon au 
-meilleur). C'est ce qui le distingue des autres sous-groupes limités à 2 courbes.
-
-**orange = v0.0.1 · bleu = v0.0.2 · rouge = v0.0.3**
-
-![ranking moves_total](images_readme_analyse_resultats/img_ranking2.png)
-*`ranking/movement/moves_total` — v0.0.3 (rouge) décroche nettement vers 
-le bas sur les variants favorables (r≥3) : les missions plus courtes 
-impliquent mécaniquement moins de mouvements. v0.0.1 (orange) reste en 
-haut sur l'ensemble du sweep, les robots errant jusqu'au max_steps faute 
-de coordination.*
-
-![ranking avg_wait_between_deposits](images_readme_analyse_resultats/img_ranking_avg_wait_between_deposits.png)
-*`ranking/efficiency/avg_wait_between_deposits` — la séparation entre 
-versions est la plus nette ici : v0.0.3 (rouge) descend à ~2–4 steps 
-sur les meilleurs variants, v0.0.2 (bleu) reste entre ~6–10, v0.0.1 
-(orange) ne descend pas sous ~12. C'est la métrique qui illustre le mieux 
-l'apport concret de la communication événementielle — les robots savent 
-où déposer sans attendre de croiser un congénère.*
-
-![ranking red_clear_step](images_readme_analyse_resultats/img_ranking_red_clear_step.png)
-*`ranking/efficiency/red_clear_step` — le plus discriminant des trois 
-clear_steps : v0.0.1 (orange) ne l'atteint presque jamais (valeurs très 
-élevées ou absentes), confirmant que sans communication la chaîne 
-rouge→jaune→vert n'est quasiment jamais complétée. v0.0.3 (rouge) descend 
-régulièrement avec l'augmentation de r.*
-
----
-
-## Meilleurs et pires variants
-
-### Top 5 variants (v0.0.3, par complétion puis steps)
-
-| Variant | Complétion | Steps moyen |
-|---|---|---|
-| `g4_y4_r4` | **100%** | 171 |
-| `g3_y1_r4` | **100%** | 198 |
-| `g4_y1_r4` | **100%** | 200 |
-| `g3_y2_r3` | **100%** | 204 |
-| `g4_y1_r3` | **100%** | 208 |
-
-> La configuration optimale n'est **pas** d'avoir le maximum de tous les robots : `g3_y1_r4` (100%, 198 steps) est presque aussi bon que `g4_y4_r4` avec 7 robots de moins. **r=4 est la clé.** La présence de y=1 dans 3 des 5 meilleurs variants confirme que les robots jaunes ne sont pas le facteur limitant dès que r≥3 (les déchets jaunes produits sont traités assez vite par un seul robot jaune).
-
-### Variants jamais complétés (v0.0.3)
-
-32 variants sur 128 n'ont **aucune complétion** même en v0.0.3 — ils partagent tous `r=1`. Exemple : `baseline_robots_g4_y4_r1` échoue systématiquement malgré 8 robots, car l'unique robot rouge devient le verrou de toute la chaîne.
-
-### Performance comparative des versions sur les mêmes variants
-
-| Variant | v0.0.1 complétion | v0.0.2 complétion | v0.0.3 complétion |
-|---|---|---|---|
-| `g4_y4_r4` | ~0% | ~60% | **100%** |
-| `g2_y2_r2` | ~0% | ~20% | ~55% |
-| `g1_y1_r1` | ~0% | ~0% | ~0% |
-
-> Même sur les configurations les plus favorables (g4_y4_r4), v0.0.1 ne complète jamais : sans communication, les robots ne coordonnent pas la cascade de dépôts et les déchets rouges ne sont pas traités assez vite.
-
----
+> **Le même effet de congestion qu'en zone verte :** Le rôle intermédiaire des robots jaunes est parfaitement rempli avec `y = 2` (taux record de 80%). Augmenter la flotte jaune à 3 ou 4 fait chuter la complétion d'environ 10 points. Les déchets jaunes n'arrivent pas assez vite pour justifier 4 robots, qui finissent par errer, se gêner et saturer le système.
 
 ## Conclusions
 
 ### Ce que montrent les données
 
-1. **La communication change tout** : le passage v0.0.1 → v0.0.3 (ajout de messages événementiels filtrés par couleur) multiplie par ~8 le taux de complétion et réduit les steps de 25%. Le simple ajout de syncs locaux (v0.0.2) donne déjà une amélioration significative, mais insuffisante sur les configurations chargées.
+1. **La communication dicte l'efficacité, pas seulement la réussite** : Avec plus de temps alloué, la version purement réactive (v0.0.1) finit par réussir 53.6% de ses missions par pure force brute, mais met en moyenne 1 465 steps. Le passage à la messagerie ciblée (v0.0.4) ne change pas radicalement le taux de succès global, mais **divise le temps de résolution par plus de 3** (425 steps) et transforme une errance chaotique en une chaîne logistique optimisée.
 
-2. **Le robot rouge est l'unique goulot d'étranglement** : toute configuration avec r=1 échoue en v0.0.3, et toutes les configurations avec r≥3 atteignent des taux élevés. Le passage r=1→r=2 est le levier le plus impactant de tout le benchmark.
+2. **Le robot rouge est le goulot d'étranglement absolu** : La flotte est totalement dépendante de la capacité des robots rouges à déclencher la cascade de dépôts depuis la zone la plus éloignée. Maximiser `r` est le seul levier d'amélioration linéaire.
 
-3. **Rendements décroissants sur les robots verts et jaunes** : au-delà de g=2 et y=2, ajouter des robots dans ces couleurs apporte peu. La zone 1 et la zone 2 ne sont pas les bottlenecks — elles peuvent absorber les déchets plus vite qu'ils n'arrivent dès qu'on a 2 robots de chaque couleur.
+3. **L'encombrement spatial et réseau (rendements négatifs)** : Dans les zones faciles (verte et jaune), ajouter des robots au-delà de 2 ne sert à rien et s'avère même **contre-productif**. Passer de 2 à 4 robots verts ou jaunes fait chuter le taux de complétion d'environ 10 points. Les robots excédentaires se gênent, bloquent les chemins A* et saturent le système pour rien. La flotte idéale est fortement asymétrique (ex: g2_y2_r4).
 
-4. **La qualité de communication prime sur la quantité** : v0.0.2 fait *plus* de syncs locaux que v0.0.3, mais v0.0.3 performe bien mieux. Les messages événementiels et filtrés (`on_pickup`, `on_deposit` vers les robots de la bonne couleur) sont plus efficaces que le partage de carte complet par contact.
+4. **La qualité de l'information prime sur la quantité de synchronisation** : La v0.0.4 envoie environ 15 000 messages ciblés (`INFORM_REF` de position), ce qui lui permet de réduire de moitié le besoin de se synchroniser localement par rapport à la v0.0.2 (36k syncs contre 73k). Résultat : l'attente moyenne pour trouver un dépôt s'effondre à un niveau record de **4.7 steps** (contre 30.4 pour la v0.0.3 sans messages).
 
-5. **Le système de messagerie de v0.0.3 n'est pas saturé** : l'overhead de communication (~3–5%) laisse une marge importante. Une v0.0.4 pourrait explorer : broadcast de position des déchets non traités, signaux d'exploration pour éviter les doublons de zone, ou protocole de réservation de cible.
+5. **Le réseau est hautement sollicité mais extrêmement rentable** : L'overhead de communication en v0.0.4 atteint **~21.2%** (les actions de communication représentent un cinquième de l'activité). Le système est bavard, mais ce "coût" réseau est un investissement largement amorti par le gain spectaculaire en efficacité de déplacement.
 
-6. **Le coût CPU de v0.0.3 est ×8** (4s → 33s) — acceptable pour l'analyse offline mais à considérer si le système devait tourner en temps réel ou sur des grilles plus grandes. L'algorithme A\* est recalculé à chaque step pour chaque agent, ce qui est l'origine principale du surcoût.
+6. **Paradoxe algorithmique : communiquer plus permet de calculer moins** : Contre toute attente, la version la plus complexe (v0.0.4) est quasiment **deux fois plus rapide à simuler** que la v0.0.3 (253s contre 446s). L'explication est simple : en sachant exactement où aller grâce aux messages, les robots v0.0.4 terminent leur mission beaucoup plus vite. Ils s'épargnent ainsi des milliers de steps d'exploration inutile, ce qui évite de recalculer la coûteuse heuristique A* à chaque tour. L'information réduit le besoin de calcul.
 
-7. **`idle_ratio = 0` ne signifie pas "efficacité = 1"** : les robots de v0.0.1 bougent autant que ceux de v0.0.3 (même `moves_avg_per_agent_per_step`), mais vers des cibles inconnues ou déjà visitées. La métrique d'efficacité réelle est `waste_cleared_per_step`, où v0.0.3 double v0.0.1.
+7. **`idle_ratio = 0` ne signifie pas "efficacité = 1"** : Les robots de la v0.0.1 n'ont aucun temps mort, ils bougent frénétiquement à chaque step (plus de 42 000 mouvements au total). Pourtant, ils sont terriblement inefficaces. La véritable métrique de succès de ce système multi-agents n'est pas le taux d'activité de l'agent, mais la **coordination spatiale** illustrée par la v0.0.4.

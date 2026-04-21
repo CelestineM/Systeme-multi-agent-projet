@@ -23,7 +23,7 @@ Quelle que soit la version, tous les agents fonctionnent selon un cycle logique 
 
 ## Versions spécifiques d'agents
 
-L'intelligence de l'agent est définie par la combinaison de ses politiques de navigation et de communication. Celles-ci sont regroupées en trois versions distinctes créées via `build_behavior` (dans `policy.py`) :
+L'intelligence de l'agent est définie par la combinaison de ses politiques de navigation et de communication. Celles-ci sont regroupées en quatre versions distinctes créées via `build_behavior` (dans `policy.py`) :
 
 ### Version 0.0.1 (Référence isolée)
 - **Navigation** : `NaiveNavigator` — exploration aléatoire et ciblage direct par ligne de mire.
@@ -33,9 +33,9 @@ L'intelligence de l'agent est définie par la combinaison de ses politiques de n
 - **Navigation** : `NaiveNavigator` — exploration aléatoire identique à celle de la v0.0.1.
 - **Communication** : `LocalKnowledgeSharing` — les robots synchronisent silencieusement leurs cartes internes avec leurs voisins immédiats (rayon = 1). Il s'agit d'une fusion locale « gratuite » qui contourne le budget de messages.
 
-### Version 0.0.3 (Intelligente et optimale)
+### Version 0.0.3 (Navigation A* + consensus local)
 
-Cette version introduit une logique déterministe avancée tant pour le déplacement que pour l'interaction, améliorant considérablement l'efficacité par rapport aux déplacements aléatoires et réduisant au minimum la charge de communication.
+Cette version introduit une logique déterministe avancée pour le déplacement (A* + frontières), tout en gardant une communication locale simple.
 
 #### Navigation : `A* + Frontier Navigator`
 - **Théorie** : 
@@ -45,12 +45,23 @@ Cette version introduit une logique déterministe avancée tant pour le déplace
   - `step_toward` utilise un algorithme A* basé sur `heapq` sur l'ensemble de `robot.knowledge.map`. 
   - `exploration_move` analyse la carte cognitive pour construire une liste de `frontier_cells` (cellules connues adjacentes à des coordonnées qui ne figurent pas encore dans les clés de la carte). Il effectue ensuite une recherche en largeur (`shortest_path_distance`) pour sélectionner la frontière la plus proche, puis réinjecte cette coordonnée dans l'algorithme A* pour tracer le chemin.
 
+#### Communication : `LocalKnowledgeSharing`
+- **Théorie** : synchronisation locale par proximité. Les robots partagent leurs cartes seulement avec leurs voisins directs.
+- **Mise en œuvre** : fusion locale `sync_neighbors` (rayon = 1), sans envoi d'événements globaux.
+
+### Version 0.0.4 (Navigation A* + communication événementielle)
+
+Cette version reprend la navigation A* de la v0.0.3 et ajoute une politique de communication avancée orientée événements.
+
+#### Navigation : `A* + Frontier Navigator`
+- Identique à v0.0.3 (`step_toward` avec A* et `exploration_move` guidé par frontières).
+
 #### Communication : `SmartColorKnowledgeSharing`
-- **Théorie** : Une politique hybride combinant un consensus local libre avec un modèle à budget limité et piloté par les événements (analogue au modèle publication/abonnement), strictement aligné sur les règles du cycle de vie des déchets. Elle empêche la saturation du réseau en limitant strictement l'accès à l'information aux seuls acteurs qui ont un « besoin d'en connaître ».
-- **Mise en œuvre** : 
-  - Au début de la délibération, les robots effectuent une opération `sync_neighbors` libre (rayon = 1) pour fusionner les dictionnaires de cartes locales sans consommer le budget de messages. 
-  - Lors du traitement des messages, l'étape `read_messages` itère spécifiquement jusqu'à la limite du `read_budget`. 
-  - Les messages sont strictement formatés via des charges utiles `MessagePerformative.INFORM_REF` décrivant les types d'événements (`discover`, `pickup`, `deposit`).
-  - **Découverte locale** : Déclenchée via `on_discover`. Parcourt les déchets visibles. Les messages ne sont envoyés *que* si la couleur du voisin lui permet d'agir sur ce déchet spécifique.(i.e. un déchet vert découvert par un robot jaune est envoyés aux robots verts uniquement)
-  - **Ramassage global** : déclenché via `on_pickup`. Informe *tous* les robots du réseau (`_get_all_robots`), mais filtre strictement la diffusion aux robots correspondant à la couleur du déchet ramassé, leur demandant d'invalider la cible de leur base de connaissances pour éviter tout déplacement inutile.
-  - **Dépôt en chaîne** : déclenché via `on_deposit`. Lorsqu'un déchet est éliminé (par exemple, un déchet rouge devient jaune lors du dépôt), le système consulte un dictionnaire de mappage `NEXT_COLOR` et informe *tous les robots* du niveau de couleur émergent (par exemple, les agents rouges informent les jaunes, les jaunes informent les verts) pour lancer la phase suivante du pipeline.
+- **Théorie** : politique hybride combinant consensus local et messages budgétés pilotés par événements, filtrés par couleur utile.
+- **Mise en œuvre** :
+  - `sync_neighbors` local en début de tour (gratuit).
+  - `read_messages` borné par `read_budget`.
+  - Messages `MessagePerformative.INFORM_REF` pour `discover`, `pickup`, `deposit`.
+  - **Découverte locale** (`on_discover`) : diffusion aux robots de la couleur concernée.
+  - **Ramassage global** (`on_pickup`) : invalidation ciblée des références connues chez les robots concernés.
+  - **Dépôt en chaîne** (`on_deposit`) : propagation vers la couleur suivante via `NEXT_COLOR`.

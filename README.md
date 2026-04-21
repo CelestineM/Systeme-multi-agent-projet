@@ -20,6 +20,32 @@ Cette interface permet de :
 - comparer automatiquement les quatre versions sur le variant correspondant,
 - afficher toutes les metriques disponibles pour le variant choisi.
 
+## Lancer les benchmarks
+
+Benchmark complet (toutes les versions configurees) :
+
+```bash
+python3 benchmark_pipeline.py --config benchmark_config.example.json --output-dir benchmark_outputs
+```
+
+Benchmark d'une seule version sans ecraser les resultats existants :
+
+```bash
+python3 benchmark_pipeline.py --config benchmark_config.example.json --output-dir benchmark_outputs --version v0.0.4 --append-existing
+```
+
+Fusionner tous les `benchmark_report*.json` existants dans `benchmark_outputs/` :
+
+```bash
+python3 benchmark_pipeline.py --output-dir benchmark_outputs --merge-only --merge-pattern "benchmark_report*.json"
+```
+
+Regenerer ensuite le dashboard :
+
+```bash
+python3 generate_benchmark_dashboard.py --report benchmark_outputs/benchmark_report.json --output docs/index.html
+```
+
 ## Analyse detaillee
 
 Le rapport d'analyse statique est disponible dans [README_ANALYSE_RESULTATS.md](README_ANALYSE_RESULTATS.md).

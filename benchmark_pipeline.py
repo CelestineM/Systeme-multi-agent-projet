@@ -739,25 +739,6 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    config = json.loads(args.config.read_text(encoding="utf-8"))
-
-    if args.version and args.versions:
-        raise ValueError("Use either --version or --versions, not both.")
-
-    selected_versions = None
-    if args.version:
-        selected_versions = [args.version.strip()]
-    elif args.versions:
-        selected_versions = [v.strip() for v in args.versions.split(",") if v.strip()]
-
-    if selected_versions is not None:
-        invalid_versions = [v for v in selected_versions if v not in AVAILABLE_VERSIONS]
-        if invalid_versions:
-            raise ValueError(
-                f"Unknown versions: {invalid_versions}. Available: {AVAILABLE_VERSIONS}"
-            )
-        config["versions"] = selected_versions
-
     args.output_dir.mkdir(parents=True, exist_ok=True)
     json_path = args.output_dir / "benchmark_report.json"
 
@@ -776,6 +757,25 @@ def main() -> None:
         json_path.write_text(json.dumps(merged_report, indent=2), encoding="utf-8")
         print(f"Merged {len(report_paths)} report file(s) into: {json_path}")
         return
+
+    if args.version and args.versions:
+        raise ValueError("Use either --version or --versions, not both.")
+
+    config = json.loads(args.config.read_text(encoding="utf-8"))
+
+    selected_versions = None
+    if args.version:
+        selected_versions = [args.version.strip()]
+    elif args.versions:
+        selected_versions = [v.strip() for v in args.versions.split(",") if v.strip()]
+
+    if selected_versions is not None:
+        invalid_versions = [v for v in selected_versions if v not in AVAILABLE_VERSIONS]
+        if invalid_versions:
+            raise ValueError(
+                f"Unknown versions: {invalid_versions}. Available: {AVAILABLE_VERSIONS}"
+            )
+        config["versions"] = selected_versions
 
     report = run_benchmark(
         config,
