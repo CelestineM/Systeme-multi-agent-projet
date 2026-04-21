@@ -4,15 +4,13 @@ Ce depot contient la simulation, le pipeline de benchmark et l'analyse des versi
 
 ## Dashboard interactif
 
-Le README GitHub ne peut pas executer une vraie interface dynamique.  
-Le projet genere donc une page HTML autonome a partir des logs TensorBoard :
 
 ```bash
 pip install -r requirements.txt
 python3 generate_benchmark_dashboard.py --report benchmark_outputs/benchmark_report.json --output docs/index.html
 ```
 
-Ouvre ensuite `docs/index.html` localement, ou publie `docs/` avec GitHub Pages.
+Ouvre ensuite `docs/index.html` localement, ou publie `docs/` avec [GitHub Pages](https://celestinem.github.io/Systeme-multi-agent-projet/).
 
 Cette interface permet de :
 
